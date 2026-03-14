@@ -24,7 +24,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from agents import Agent, Runner, RunConfig, set_tracing_disabled
+from agents import Agent, Runner, RunConfig, MaxTurnsExceeded, set_tracing_disabled
 from agents.lifecycle import RunHooksBase
 from agents.mcp import MCPServerStdio
 from agents.extensions.models.litellm_model import LitellmModel
@@ -168,7 +168,7 @@ async def start_playwright(headless=True, init_scripts=None, viewport="1280x720"
         output_dir: Directory for video/trace output (default: temp dir)
         save_video: Whether to save a video recording of the session
     """
-    args = ["@playwright/mcp@latest", "--isolated"]
+    args = ["@playwright/mcp@0.0.68", "--isolated"]
     if headless:
         args.append("--headless")
     args.extend(["--viewport-size", viewport])
@@ -256,6 +256,35 @@ async def run_task(
             output_tokens=output_tok,
             items=serialize_items(result.new_items),
             screenshots=hooks.screenshots if hooks else [],
+        )
+    except MaxTurnsExceeded as e:
+        # The agent ran but exceeded the turn limit.  The SDK attaches a
+        # RunErrorDetails to e.run_data with the partial results accumulated
+        # before the exception was raised.  Extract them so we don't lose
+        # the turns, token counts, and trace items.
+        rd = e.run_data  # RunErrorDetails | None
+        if rd is not None:
+            raw_responses = rd.raw_responses
+            new_items = rd.new_items
+        else:
+            raw_responses = []
+            new_items = []
+
+        input_tok = sum(r.usage.input_tokens for r in raw_responses if r.usage)
+        output_tok = sum(r.usage.output_tokens for r in raw_responses if r.usage)
+
+        return AgentRun(
+            model_key=model_key,
+            task_id=task_id,
+            condition=condition,
+            final_output="",
+            turns=len(raw_responses),
+            elapsed_sec=round(time.time() - t0, 2),
+            input_tokens=input_tok,
+            output_tokens=output_tok,
+            items=serialize_items(new_items),
+            screenshots=hooks.screenshots if hooks else [],
+            error=f"MaxTurnsExceeded: {str(e)[:500]}",
         )
     except Exception as e:
         return AgentRun(

@@ -48,8 +48,8 @@ def extract_answer(final_output: str) -> str | None:
     match = re.search(pattern, final_output, re.IGNORECASE)
     if match:
         return match.group(1).strip()
-    # Fall back to the full output if no ANSWER pattern
-    return final_output.strip()
+    # Return None if no ANSWER pattern found — agent must format answer properly
+    return None
 
 
 def evaluate_run(task_description: str, agent_output: str, client: OpenAI = None, model: str = "gpt-4o") -> dict:
