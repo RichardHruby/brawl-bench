@@ -1,0 +1,253 @@
+"""
+Browser Brawl — Benchmark Runner
+
+Orchestrates baseline vs disrupted runs across all tasks and models,
+then evaluates and generates a comparison report.
+"""
+
+import asyncio
+import json
+import os
+from datetime import datetime
+from glob import glob
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from harness import MODELS, start_playwright, run_task, load_tasks, format_prompt, save_result
+from evaluator import evaluate_results_dir, extract_answer
+
+
+async def run_single(
+    model_key: str,
+    task: dict,
+    condition: str,
+    disruption_files: list[str] | None,
+    output_dir: str,
+    max_turns: int = 25,
+    headless: bool = True,
+):
+    """Run a single (model, task, condition) combination."""
+    print(f"\n{'─'*60}")
+    print(f"  {model_key} | {task['id']} | {condition}")
+    print(f"  Task: {task['ques'][:80]}...")
+    print(f"{'─'*60}")
+
+    init_scripts = disruption_files if condition == "disrupted" else None
+    run_dir = Path(output_dir) / condition / model_key / task["id"]
+    run_dir.mkdir(parents=True, exist_ok=True)
+    mcp_output_dir = str(run_dir / "mcp_output")
+
+    async with start_playwright(
+        headless=headless,
+        init_scripts=init_scripts,
+        output_dir=mcp_output_dir,
+        save_video=True,
+    ) as mcp:
+        result = await run_task(
+            model_key=model_key,
+            task_prompt=format_prompt(task),
+            mcp_server=mcp,
+            task_id=task["id"],
+            condition=condition,
+            max_turns=max_turns,
+            screenshot_dir=str(run_dir),
+        )
+
+    # Brief pause to ensure Chrome processes fully exit
+    await asyncio.sleep(2)
+
+    save_result(result, output_dir=output_dir)
+
+    answer = extract_answer(result.final_output)
+    status = "ERROR" if result.error else ("answered" if answer else "no answer")
+    print(f"  → {status} in {result.turns} turns ({result.elapsed_sec}s)")
+    if answer:
+        print(f"  → Answer: {answer[:100]}")
+    if result.error:
+        print(f"  → Error: {result.error[:200]}")
+
+    return result
+
+
+async def run_benchmark(
+    models: list[str] | None = None,
+    tasks_file: str = "tasks/amazon_selected.jsonl",
+    disruptions_dir: str = "disruptions",
+    output_dir: str = "results",
+    max_turns: int = 25,
+    headless: bool = True,
+    conditions: list[str] | None = None,
+):
+    """
+    Run the full benchmark: all models × all tasks × baseline + disrupted.
+    """
+    tasks = load_tasks(tasks_file)
+    model_keys = models or list(MODELS.keys())
+    conditions = conditions or ["baseline", "disrupted"]
+
+    # Find disruption files
+    disruption_files = sorted(glob(os.path.join(disruptions_dir, "*.js")))
+    if "disrupted" in conditions:
+        print(f"Disruption files: {[os.path.basename(f) for f in disruption_files]}")
+        if not disruption_files:
+            print("WARNING: No disruption files found! Disrupted runs will be same as baseline.")
+
+    print(f"Models: {model_keys}")
+    print(f"Tasks: {[t['id'] for t in tasks]}")
+    print(f"Conditions: {conditions}")
+    total = len(model_keys) * len(tasks) * len(conditions)
+    print(f"Total runs: {total}")
+    print(f"{'='*60}")
+
+    all_results = []
+    run_count = 0
+
+    for task in tasks:
+        for model_key in model_keys:
+            for condition in conditions:
+                run_count += 1
+                print(f"\n[{run_count}/{total}]", end="")
+
+                result = await run_single(
+                    model_key=model_key,
+                    task=task,
+                    condition=condition,
+                    disruption_files=disruption_files if condition == "disrupted" else None,
+                    output_dir=output_dir,
+                    max_turns=max_turns,
+                    headless=headless,
+                )
+                all_results.append(result)
+
+    return all_results
+
+
+def generate_report(results_dir: str, tasks_file: str):
+    """Generate a comparison report from evaluated results."""
+    eval_results = []
+    results_path = Path(results_dir)
+
+    for condition_dir in sorted(results_path.iterdir()):
+        if not condition_dir.is_dir():
+            continue
+        for model_dir in sorted(condition_dir.iterdir()):
+            if not model_dir.is_dir():
+                continue
+            for task_dir in sorted(model_dir.iterdir()):
+                if not task_dir.is_dir():
+                    continue
+                eval_file = task_dir / "eval.json"
+                run_file = task_dir / "run.json"
+                if eval_file.exists() and run_file.exists():
+                    with open(eval_file) as f:
+                        eval_data = json.load(f)
+                    with open(run_file) as f:
+                        run_data = json.load(f)
+                    eval_results.append({
+                        "condition": condition_dir.name,
+                        "model": model_dir.name,
+                        "task": task_dir.name,
+                        "success": eval_data.get("success"),
+                        "turns": run_data.get("turns", 0),
+                        "elapsed": run_data.get("elapsed_sec", 0),
+                        "error": run_data.get("error"),
+                    })
+
+    if not eval_results:
+        print("No evaluated results found.")
+        return
+
+    print(f"\n{'='*70}")
+    print("BROWSER BRAWL — BENCHMARK REPORT")
+    print(f"{'='*70}\n")
+
+    # Per-model summary
+    models_seen = sorted(set(r["model"] for r in eval_results))
+    conditions_seen = sorted(set(r["condition"] for r in eval_results))
+
+    print(f"{'Model':<22} {'Condition':<12} {'Success':<10} {'Rate':<8} {'Avg Turns':<10}")
+    print(f"{'─'*62}")
+
+    for model in models_seen:
+        for condition in conditions_seen:
+            runs = [r for r in eval_results if r["model"] == model and r["condition"] == condition]
+            successes = sum(1 for r in runs if r["success"] is True)
+            total = len(runs)
+            rate = f"{successes}/{total}" if total > 0 else "N/A"
+            pct = f"{100*successes/total:.0f}%" if total > 0 else "N/A"
+            avg_turns = f"{sum(r['turns'] for r in runs)/total:.1f}" if total > 0 else "N/A"
+            print(f"{model:<22} {condition:<12} {rate:<10} {pct:<8} {avg_turns:<10}")
+
+    # Delta analysis
+    print(f"\n{'─'*62}")
+    print("DISRUPTION IMPACT (baseline → disrupted)\n")
+
+    for model in models_seen:
+        baseline_runs = {r["task"]: r for r in eval_results if r["model"] == model and r["condition"] == "baseline"}
+        disrupted_runs = {r["task"]: r for r in eval_results if r["model"] == model and r["condition"] == "disrupted"}
+
+        regressions = 0
+        for task_id in baseline_runs:
+            b = baseline_runs[task_id]
+            d = disrupted_runs.get(task_id)
+            if d and b["success"] and not d["success"]:
+                regressions += 1
+                print(f"  REGRESSION: {model} / {task_id}: SUCCESS → FAIL")
+
+        if regressions == 0 and disrupted_runs:
+            print(f"  {model}: no regressions detected")
+
+    # Save report
+    report_path = Path(results_dir) / "report.json"
+    with open(report_path, "w") as f:
+        json.dump(eval_results, f, indent=2)
+    print(f"\nFull report saved to: {report_path}")
+
+
+async def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Browser Brawl Runner")
+    parser.add_argument("--models", nargs="*", default=None, help="Models to test (default: all)")
+    parser.add_argument("--tasks-file", default="tasks/amazon_selected.jsonl")
+    parser.add_argument("--disruptions-dir", default="disruptions")
+    parser.add_argument("--output-dir", default="results")
+    parser.add_argument("--max-turns", type=int, default=25)
+    parser.add_argument("--headed", action="store_true")
+    parser.add_argument("--conditions", nargs="*", default=None, help="baseline, disrupted, or both")
+    parser.add_argument("--evaluate", action="store_true", help="Run evaluation after benchmark")
+    parser.add_argument("--report", action="store_true", help="Generate report from existing results")
+    parser.add_argument("--eval-model", default="gpt-4o")
+    args = parser.parse_args()
+
+    if args.report:
+        generate_report(args.output_dir, args.tasks_file)
+        return
+
+    # Run benchmark
+    await run_benchmark(
+        models=args.models,
+        tasks_file=args.tasks_file,
+        disruptions_dir=args.disruptions_dir,
+        output_dir=args.output_dir,
+        max_turns=args.max_turns,
+        headless=not args.headed,
+        conditions=args.conditions,
+    )
+
+    # Optionally evaluate
+    if args.evaluate:
+        from openai import OpenAI
+        print(f"\n{'='*60}")
+        print("RUNNING EVALUATION")
+        print(f"{'='*60}")
+        client = OpenAI()
+        evaluate_results_dir(args.output_dir, args.tasks_file, client, args.eval_model)
+        generate_report(args.output_dir, args.tasks_file)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
