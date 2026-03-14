@@ -60,15 +60,8 @@ def _resolve_model(key: str):
 SYSTEM_PROMPT = """\
 You are a browser automation agent. You complete tasks by interacting with web pages using your browser tools.
 
-1. Start by navigating to the target URL with browser_navigate.
-2. Take a snapshot (browser_snapshot) to see page structure and interactive elements.
-3. Interact with elements using their ref attribute values from the snapshot.
-4. Use browser_snapshot after each action to see the updated page state.
-5. When you have found the answer to the task, respond with EXACTLY this format:
+When you have found the answer to the task, respond with EXACTLY this format:
    ANSWER; [your answer here]
-6. If the task asks you to find a product, provide the product name and relevant details.
-7. Be persistent — if a page has popups, banners, or overlays, dismiss them and continue.
-8. Use search boxes, filters, and sorting to find what the task asks for.
 """
 
 # ---------------------------------------------------------------------------
@@ -85,6 +78,8 @@ class AgentRun:
     final_output: str
     turns: int
     elapsed_sec: float
+    input_tokens: int = 0
+    output_tokens: int = 0
     items: list = field(default_factory=list)
     screenshots: list = field(default_factory=list)
     error: str | None = None
@@ -222,6 +217,9 @@ async def run_task(
             hooks=hooks,
         )
 
+        input_tok = sum(r.usage.input_tokens for r in result.raw_responses if r.usage)
+        output_tok = sum(r.usage.output_tokens for r in result.raw_responses if r.usage)
+
         return AgentRun(
             model_key=model_key,
             task_id=task_id,
@@ -229,6 +227,8 @@ async def run_task(
             final_output=result.final_output or "",
             turns=len(result.raw_responses),
             elapsed_sec=round(time.time() - t0, 2),
+            input_tokens=input_tok,
+            output_tokens=output_tok,
             items=serialize_items(result.new_items),
             screenshots=hooks.screenshots if hooks else [],
         )

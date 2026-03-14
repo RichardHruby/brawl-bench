@@ -1,7 +1,10 @@
 .venv/
 .env
 __pycache__/
-results/
 *.pyc
 .DS_Store
 node_modules/
+results/
+*.png
+*.webm
+WebVoyager/

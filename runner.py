@@ -153,6 +153,8 @@ def generate_report(results_dir: str, tasks_file: str):
                         "success": eval_data.get("success"),
                         "turns": run_data.get("turns", 0),
                         "elapsed": run_data.get("elapsed_sec", 0),
+                        "input_tokens": run_data.get("input_tokens", 0),
+                        "output_tokens": run_data.get("output_tokens", 0),
                         "error": run_data.get("error"),
                     })
 
@@ -199,6 +201,32 @@ def generate_report(results_dir: str, tasks_file: str):
 
         if regressions == 0 and disrupted_runs:
             print(f"  {model}: no regressions detected")
+
+    # Token usage & cost
+    PRICING = {  # per 1M tokens: (input, output)
+        "claude-sonnet-4.6": (3.0, 15.0),
+        "gpt-5.4": (2.5, 15.0),
+        "gemini-3.1-pro": (1.25, 10.0),
+    }
+
+    print(f"\n{'─'*62}")
+    print("TOKEN USAGE & COST\n")
+    print(f"{'Model':<22} {'Condition':<12} {'Input Tok':<12} {'Output Tok':<12} {'Cost':<10}")
+    print(f"{'─'*68}")
+
+    total_cost = 0.0
+    for model in models_seen:
+        for condition in conditions_seen:
+            runs = [r for r in eval_results if r["model"] == model and r["condition"] == condition]
+            in_tok = sum(r["input_tokens"] for r in runs)
+            out_tok = sum(r["output_tokens"] for r in runs)
+            in_price, out_price = PRICING.get(model, (3.0, 15.0))
+            cost = (in_tok / 1_000_000 * in_price) + (out_tok / 1_000_000 * out_price)
+            total_cost += cost
+            print(f"{model:<22} {condition:<12} {in_tok:<12,} {out_tok:<12,} ${cost:.4f}")
+
+    print(f"{'─'*68}")
+    print(f"{'TOTAL':<46} ${total_cost:.4f}")
 
     # Save report
     report_path = Path(results_dir) / "report.json"
