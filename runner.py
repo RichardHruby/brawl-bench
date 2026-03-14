@@ -83,10 +83,26 @@ async def run_benchmark(
 ):
     """
     Run the full benchmark: all models × all tasks × baseline + disrupted.
+
+    Each run gets a timestamped subdirectory under output_dir to prevent
+    overwriting previous results.  A 'latest' symlink is updated to point
+    at the newest run.
     """
     tasks = load_tasks(tasks_file)
     model_keys = models or list(MODELS.keys())
     conditions = conditions or ["baseline", "disrupted"]
+
+    # Create a timestamped run directory so repeated runs never overwrite
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_output_dir = str(Path(output_dir) / run_timestamp)
+    Path(run_output_dir).mkdir(parents=True, exist_ok=True)
+
+    # Update a 'latest' symlink for convenience
+    latest_link = Path(output_dir) / "latest"
+    latest_link.unlink(missing_ok=True)
+    latest_link.symlink_to(run_timestamp)
+
+    print(f"Run output: {run_output_dir}")
 
     # Find disruption files
     disruption_files = sorted(glob(os.path.join(disruptions_dir, "*.js")))
@@ -116,13 +132,13 @@ async def run_benchmark(
                     task=task,
                     condition=condition,
                     disruption_files=disruption_files if condition == "disrupted" else None,
-                    output_dir=output_dir,
+                    output_dir=run_output_dir,
                     max_turns=max_turns,
                     headless=headless,
                 )
                 all_results.append(result)
 
-    return all_results
+    return all_results, run_output_dir
 
 
 def generate_report(results_dir: str, tasks_file: str):
@@ -252,11 +268,16 @@ async def main():
     args = parser.parse_args()
 
     if args.report:
-        generate_report(args.output_dir, args.tasks_file)
+        # Use 'latest' symlink if the user just passes the base results dir
+        report_dir = args.output_dir
+        latest = Path(report_dir) / "latest"
+        if latest.is_symlink() or latest.is_dir():
+            report_dir = str(latest)
+        generate_report(report_dir, args.tasks_file)
         return
 
     # Run benchmark
-    await run_benchmark(
+    _results, run_output_dir = await run_benchmark(
         models=args.models,
         tasks_file=args.tasks_file,
         disruptions_dir=args.disruptions_dir,
@@ -273,8 +294,8 @@ async def main():
         print("RUNNING EVALUATION")
         print(f"{'='*60}")
         client = OpenAI()
-        evaluate_results_dir(args.output_dir, args.tasks_file, client, args.eval_model)
-        generate_report(args.output_dir, args.tasks_file)
+        evaluate_results_dir(run_output_dir, args.tasks_file, client, args.eval_model)
+        generate_report(run_output_dir, args.tasks_file)
 
 
 if __name__ == "__main__":
