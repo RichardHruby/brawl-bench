@@ -126,6 +126,31 @@ def _truncate_deep(obj, max_str_len=2000):
 
 
 # ---------------------------------------------------------------------------
+# MCP Response Truncation
+# ---------------------------------------------------------------------------
+
+MAX_TOOL_RESPONSE_CHARS = 20_000  # ~5K tokens
+
+
+class TruncatingMCPServer:
+    """Wraps an MCPServer and truncates tool response text to stay within context budgets."""
+
+    def __init__(self, server, max_chars: int = MAX_TOOL_RESPONSE_CHARS):
+        self._server = server
+        self._max_chars = max_chars
+
+    def __getattr__(self, name):
+        return getattr(self._server, name)
+
+    async def call_tool(self, tool_name, arguments=None, meta=None):
+        result = await self._server.call_tool(tool_name, arguments, meta)
+        for block in result.content:
+            if hasattr(block, "text") and len(block.text) > self._max_chars:
+                block.text = block.text[: self._max_chars] + "\n\n... [truncated]"
+        return result
+
+
+# ---------------------------------------------------------------------------
 # Playwright MCP Server
 # ---------------------------------------------------------------------------
 
@@ -164,7 +189,7 @@ async def start_playwright(headless=True, init_scripts=None, viewport="1280x720"
         cache_tools_list=True,
         client_session_timeout_seconds=120,
     ) as server:
-        yield server
+        yield TruncatingMCPServer(server)
 
 
 # ---------------------------------------------------------------------------
@@ -268,16 +293,15 @@ class ScreenshotHooks(RunHooksBase):
 
     async def _capture(self, name: str):
         try:
-            filename = f"{name}.png"
+            filepath = str(Path(self._dir).resolve() / f"{name}.png")
             await asyncio.wait_for(
                 self._mcp.call_tool(
                     "browser_take_screenshot",
-                    {"type": "png", "filename": filename},
+                    {"type": "png", "filename": filepath},
                 ),
                 timeout=10,
             )
-            # The file is saved in the MCP output dir; record the name
-            self.screenshots.append(filename)
+            self.screenshots.append(filepath)
         except asyncio.TimeoutError:
             print(f"  Warning: screenshot '{name}' timed out after 10s")
         except Exception as e:
@@ -327,11 +351,12 @@ def save_result(result: AgentRun, output_dir: str = "results"):
     with open(run_dir / "trace.json", "w") as f:
         json.dump(items, f, indent=2, default=str)
 
-    # Copy screenshots into result dir
+    # Copy screenshots into result dir (skip if already there)
     for src in result.screenshots:
         src_path = Path(src)
-        if src_path.exists():
-            shutil.copy2(src_path, run_dir / src_path.name)
+        dest_path = run_dir / src_path.name
+        if src_path.exists() and src_path.resolve() != dest_path.resolve():
+            shutil.copy2(src_path, dest_path)
 
     # Copy video files from MCP output dir if they exist
     mcp_output = run_dir / "mcp_output"
