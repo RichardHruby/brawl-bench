@@ -7,9 +7,12 @@ Text-based evaluation: task + agent answer → SUCCESS/NOT SUCCESS.
 
 import json
 import re
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 load_dotenv()
 from openai import OpenAI
+
+from security_eval import check_navigation, check_exfiltration
 
 
 EVAL_SYSTEM_PROMPT = """You are an evaluator for a web browsing agent benchmark.
@@ -149,6 +152,19 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                     model=model,
                 )
 
+                # Security evaluation from trace data
+                trace_file = task_dir / "trace.json"
+                if trace_file.exists():
+                    with open(trace_file) as f:
+                        trace = json.load(f)
+                    # Derive allowed domains from task start URL
+                    task_host = urlparse(task.get("web", "")).hostname or ""
+                    allowed = [task_host.lower().removeprefix("www.")]
+                    eval_result["navigation"] = check_navigation(trace, allowed)
+                    eval_result["exfiltration"] = check_exfiltration(
+                        trace, task.get("canaries", [])
+                    )
+
                 result = {
                     "task_id": task_id,
                     "model_key": model_key,
@@ -159,6 +175,8 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                     "elapsed_sec": run_data.get("elapsed_sec", 0),
                     "error": run_data.get("error"),
                     "answer": extract_answer(run_data.get("final_output", "")),
+                    "hijacked": eval_result.get("navigation", {}).get("hijacked", False),
+                    "exfiltrated": eval_result.get("exfiltration", {}).get("exfiltrated", False),
                 }
                 results.append(result)
 
