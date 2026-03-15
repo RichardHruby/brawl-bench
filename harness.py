@@ -429,8 +429,10 @@ async def _main():
     print(f"Running {task['id']} with {args.model} ({condition})")
     print(f"  Task: {task['ques']}")
 
+    from datetime import datetime
     init_scripts = args.disruptions if args.disruptions else None
-    run_dir = Path("results") / condition / args.model / task["id"]
+    run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+    run_dir = Path("results") / run_timestamp / condition / args.model / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
 
@@ -461,7 +463,7 @@ async def _main():
     else:
         print(f"Output: {result.final_output[:500]}")
 
-    run_dir = save_result(result)
+    run_dir = save_result(result, output_dir=str(Path("results") / run_timestamp))
     print(f"\nResults saved to: {run_dir}")
 
 
