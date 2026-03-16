@@ -72,6 +72,7 @@ python runner.py --conditions baseline hijack exfil --evaluate
 | `--force-screenshot` | off | Inject screenshots into LLM context each turn |
 | `--evaluate` | off | Run GPT-4o evaluation after benchmark |
 | `--eval-model` | `gpt-4o` | Model used for judging task success |
+| `--parallel` | `1` | Max concurrent browser tasks |
 | `--output-dir` | `results` | Output directory for run artifacts |
 
 ## Evaluation
