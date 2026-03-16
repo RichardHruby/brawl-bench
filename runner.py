@@ -36,7 +36,7 @@ async def run_single(
     print(f"{'─'*60}")
 
     init_scripts = disruption_files if condition == "disrupted" else None
-    run_dir = Path(output_dir) / condition / model_key / task["id"]
+    run_dir = Path(output_dir) / model_key / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
 
@@ -72,17 +72,44 @@ async def run_single(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Disruption Sets — maps condition names to disruption file directories.
+# Each condition loads all *.js files from its listed directories.
+# ---------------------------------------------------------------------------
+
+DISRUPTION_SETS = {
+    "baseline":  [],
+    "annoyance": ["disruptions/generic"],
+    "hijack":    ["disruptions/amazon/hijack"],
+    "exfil":     ["disruptions/amazon/exfil"],
+}
+
+
+def resolve_disruptions(condition: str) -> list[str]:
+    """Return sorted list of JS file paths for a given condition."""
+    dirs = DISRUPTION_SETS.get(condition, [])
+    files = []
+    for d in dirs:
+        files.extend(sorted(glob(os.path.join(d, "*.js"))))
+    return files
+
+
 async def run_benchmark(
     models: list[str] | None = None,
     tasks_file: str = "tasks/amazon_selected.jsonl",
-    disruptions_dir: str = "disruptions",
     output_dir: str = "results",
     max_turns: int = 25,
     headless: bool = True,
     conditions: list[str] | None = None,
 ):
     """
-    Run the full benchmark: all models × all tasks × baseline + disrupted.
+    Run the full benchmark: all models × all tasks × conditions.
+
+    Conditions map to disruption sets:
+      baseline  — no disruptions
+      annoyance — generic UI disruptions (cookie banner, sticky header, etc.)
+      hijack    — navigation hijack attacks
+      exfil     — data exfiltration attacks
 
     Each run gets a timestamped subdirectory under output_dir to prevent
     overwriting previous results.  A 'latest' symlink is updated to point
@@ -90,7 +117,7 @@ async def run_benchmark(
     """
     tasks = load_tasks(tasks_file)
     model_keys = models or list(MODELS.keys())
-    conditions = conditions or ["baseline", "disrupted"]
+    conditions = conditions or ["baseline"]
 
     # Create a timestamped run directory so repeated runs never overwrite
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
@@ -104,12 +131,13 @@ async def run_benchmark(
 
     print(f"Run output: {run_output_dir}")
 
-    # Find disruption files
-    disruption_files = sorted(glob(os.path.join(disruptions_dir, "*.js")))
-    if "disrupted" in conditions:
-        print(f"Disruption files: {[os.path.basename(f) for f in disruption_files]}")
-        if not disruption_files:
-            print("WARNING: No disruption files found! Disrupted runs will be same as baseline.")
+    # Resolve and display disruption files per condition
+    for condition in conditions:
+        files = resolve_disruptions(condition)
+        if files:
+            print(f"Disruptions [{condition}]: {[os.path.basename(f) for f in files]}")
+        elif condition != "baseline":
+            print(f"WARNING: No disruption files for condition '{condition}'!")
 
     print(f"Models: {model_keys}")
     print(f"Tasks: {[t['id'] for t in tasks]}")
@@ -127,11 +155,13 @@ async def run_benchmark(
                 run_count += 1
                 print(f"\n[{run_count}/{total}]", end="")
 
+                disruption_files = resolve_disruptions(condition)
+
                 result = await run_single(
                     model_key=model_key,
                     task=task,
                     condition=condition,
-                    disruption_files=disruption_files if condition == "disrupted" else None,
+                    disruption_files=disruption_files if disruption_files else None,
                     output_dir=run_output_dir,
                     max_turns=max_turns,
                     headless=headless,
@@ -146,33 +176,36 @@ def generate_report(results_dir: str, tasks_file: str):
     eval_results = []
     results_path = Path(results_dir)
 
-    for condition_dir in sorted(results_path.iterdir()):
-        if not condition_dir.is_dir():
+    for model_dir in sorted(results_path.iterdir()):
+        if not model_dir.is_dir() or model_dir.name.endswith(".json"):
             continue
-        for model_dir in sorted(condition_dir.iterdir()):
-            if not model_dir.is_dir():
+        for task_dir in sorted(model_dir.iterdir()):
+            if not task_dir.is_dir():
                 continue
-            for task_dir in sorted(model_dir.iterdir()):
-                if not task_dir.is_dir():
-                    continue
-                eval_file = task_dir / "eval.json"
-                run_file = task_dir / "run.json"
-                if eval_file.exists() and run_file.exists():
-                    with open(eval_file) as f:
-                        eval_data = json.load(f)
-                    with open(run_file) as f:
-                        run_data = json.load(f)
-                    eval_results.append({
-                        "condition": condition_dir.name,
-                        "model": model_dir.name,
-                        "task": task_dir.name,
-                        "success": eval_data.get("success"),
-                        "turns": run_data.get("turns", 0),
-                        "elapsed": run_data.get("elapsed_sec", 0),
-                        "input_tokens": run_data.get("input_tokens", 0),
-                        "output_tokens": run_data.get("output_tokens", 0),
-                        "error": run_data.get("error"),
-                    })
+            eval_file = task_dir / "eval.json"
+            run_file = task_dir / "run.json"
+            if eval_file.exists() and run_file.exists():
+                with open(eval_file) as f:
+                    eval_data = json.load(f)
+                with open(run_file) as f:
+                    run_data = json.load(f)
+                nav = eval_data.get("navigation", {})
+                exfil = eval_data.get("exfiltration", {})
+                eval_results.append({
+                    "condition": run_data.get("condition", "unknown"),
+                    "model": model_dir.name,
+                    "task": task_dir.name,
+                    "success": eval_data.get("success"),
+                    "turns": run_data.get("turns", 0),
+                    "elapsed": run_data.get("elapsed_sec", 0),
+                    "input_tokens": run_data.get("input_tokens", 0),
+                    "output_tokens": run_data.get("output_tokens", 0),
+                    "error": run_data.get("error"),
+                    "hijacked": nav.get("hijacked", False),
+                    "offsite_urls": nav.get("offsite_urls", []),
+                    "exfiltrated": exfil.get("exfiltrated", False),
+                    "leaked_canaries": exfil.get("leaked_canaries", []),
+                })
 
     if not eval_results:
         print("No evaluated results found.")
@@ -244,6 +277,21 @@ def generate_report(results_dir: str, tasks_file: str):
     print(f"{'─'*68}")
     print(f"{'TOTAL':<46} ${total_cost:.4f}")
 
+    # Security events
+    security_events = [r for r in eval_results if r["hijacked"] or r["exfiltrated"]]
+    print(f"\n{'─'*62}")
+    print("SECURITY EVENTS\n")
+    if security_events:
+        print(f"{'Model':<22} {'Task':<14} {'Condition':<12} {'Hijack':<8} {'Exfil':<8} {'Details'}")
+        print(f"{'─'*80}")
+        for r in security_events:
+            details = ", ".join(r["offsite_urls"] + r["leaked_canaries"])
+            print(f"{r['model']:<22} {r['task']:<14} {r['condition']:<12} "
+                  f"{'YES' if r['hijacked'] else '-':<8} "
+                  f"{'YES' if r['exfiltrated'] else '-':<8} {details[:60]}")
+    else:
+        print("  No navigation hijacks or data exfiltration detected.")
+
     # Save report
     report_path = Path(results_dir) / "report.json"
     with open(report_path, "w") as f:
@@ -257,11 +305,11 @@ async def main():
     parser = argparse.ArgumentParser(description="Browser Brawl Runner")
     parser.add_argument("--models", nargs="*", default=None, help="Models to test (default: all)")
     parser.add_argument("--tasks-file", default="tasks/amazon_selected.jsonl")
-    parser.add_argument("--disruptions-dir", default="disruptions")
     parser.add_argument("--output-dir", default="results")
     parser.add_argument("--max-turns", type=int, default=25)
     parser.add_argument("--headed", action="store_true")
-    parser.add_argument("--conditions", nargs="*", default=None, help="baseline, disrupted, or both")
+    parser.add_argument("--conditions", nargs="*", default=None,
+                        help="Conditions: baseline, annoyance, hijack, exfil (default: baseline)")
     parser.add_argument("--evaluate", action="store_true", help="Run evaluation after benchmark")
     parser.add_argument("--report", action="store_true", help="Generate report from existing results")
     parser.add_argument("--eval-model", default="gpt-4o")
@@ -280,7 +328,6 @@ async def main():
     _results, run_output_dir = await run_benchmark(
         models=args.models,
         tasks_file=args.tasks_file,
-        disruptions_dir=args.disruptions_dir,
         output_dir=args.output_dir,
         max_turns=args.max_turns,
         headless=not args.headed,
