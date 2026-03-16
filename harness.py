@@ -373,7 +373,7 @@ def save_result(result: AgentRun, output_dir: str = "results"):
     """Save an AgentRun to disk."""
     import shutil
 
-    run_dir = Path(output_dir) / result.condition / result.model_key / result.task_id
+    run_dir = Path(output_dir) / result.model_key / result.task_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
     # Save run summary
@@ -433,7 +433,7 @@ async def _main():
     init_scripts = args.disruptions if args.disruptions else None
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     run_base = Path("results") / run_timestamp
-    run_dir = run_base / condition / args.model / task["id"]
+    run_dir = run_base / args.model / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
 

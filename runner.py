@@ -36,7 +36,7 @@ async def run_single(
     print(f"{'─'*60}")
 
     init_scripts = disruption_files if condition == "disrupted" else None
-    run_dir = Path(output_dir) / condition / model_key / task["id"]
+    run_dir = Path(output_dir) / model_key / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
 
@@ -176,39 +176,36 @@ def generate_report(results_dir: str, tasks_file: str):
     eval_results = []
     results_path = Path(results_dir)
 
-    for condition_dir in sorted(results_path.iterdir()):
-        if not condition_dir.is_dir():
+    for model_dir in sorted(results_path.iterdir()):
+        if not model_dir.is_dir() or model_dir.name.endswith(".json"):
             continue
-        for model_dir in sorted(condition_dir.iterdir()):
-            if not model_dir.is_dir():
+        for task_dir in sorted(model_dir.iterdir()):
+            if not task_dir.is_dir():
                 continue
-            for task_dir in sorted(model_dir.iterdir()):
-                if not task_dir.is_dir():
-                    continue
-                eval_file = task_dir / "eval.json"
-                run_file = task_dir / "run.json"
-                if eval_file.exists() and run_file.exists():
-                    with open(eval_file) as f:
-                        eval_data = json.load(f)
-                    with open(run_file) as f:
-                        run_data = json.load(f)
-                    nav = eval_data.get("navigation", {})
-                    exfil = eval_data.get("exfiltration", {})
-                    eval_results.append({
-                        "condition": condition_dir.name,
-                        "model": model_dir.name,
-                        "task": task_dir.name,
-                        "success": eval_data.get("success"),
-                        "turns": run_data.get("turns", 0),
-                        "elapsed": run_data.get("elapsed_sec", 0),
-                        "input_tokens": run_data.get("input_tokens", 0),
-                        "output_tokens": run_data.get("output_tokens", 0),
-                        "error": run_data.get("error"),
-                        "hijacked": nav.get("hijacked", False),
-                        "offsite_urls": nav.get("offsite_urls", []),
-                        "exfiltrated": exfil.get("exfiltrated", False),
-                        "leaked_canaries": exfil.get("leaked_canaries", []),
-                    })
+            eval_file = task_dir / "eval.json"
+            run_file = task_dir / "run.json"
+            if eval_file.exists() and run_file.exists():
+                with open(eval_file) as f:
+                    eval_data = json.load(f)
+                with open(run_file) as f:
+                    run_data = json.load(f)
+                nav = eval_data.get("navigation", {})
+                exfil = eval_data.get("exfiltration", {})
+                eval_results.append({
+                    "condition": run_data.get("condition", "unknown"),
+                    "model": model_dir.name,
+                    "task": task_dir.name,
+                    "success": eval_data.get("success"),
+                    "turns": run_data.get("turns", 0),
+                    "elapsed": run_data.get("elapsed_sec", 0),
+                    "input_tokens": run_data.get("input_tokens", 0),
+                    "output_tokens": run_data.get("output_tokens", 0),
+                    "error": run_data.get("error"),
+                    "hijacked": nav.get("hijacked", False),
+                    "offsite_urls": nav.get("offsite_urls", []),
+                    "exfiltrated": exfil.get("exfiltrated", False),
+                    "leaked_canaries": exfil.get("leaked_canaries", []),
+                })
 
     if not eval_results:
         print("No evaluated results found.")
