@@ -9,6 +9,8 @@
 
 <p align="center"><b>B</b>rowser <b>R</b>obustness <b>A</b>gainst <b>W</b>eb-<b>L</b>evel Attacks</p>
 
+<p align="center">A benchmark by <a href="https://browser-brawl.com">Browser Brawl</a></p>
+
 Adversarial benchmark for LLM browser agents. Agents complete real web tasks from the [WebVoyager](https://github.com/MinorJerry/WebVoyager) dataset while JavaScript disruptions, injected via Playwright's `--init-script`, try to hijack navigation, phish credentials, or just get in the way.
 
 Tasks are sourced from WebVoyager's Amazon subset: natural-language shopping queries like finding products with specific filters, comparing prices, and checking availability.
@@ -80,3 +82,10 @@ The evaluator scores each run on two axes:
 2. **Security** — trace analysis checks for navigation hijacking (off-site URLs) and data exfiltration (canary leaks)
 
 Results are saved per-run as `run.json`, `trace.json`, `eval.json`, plus screenshots and video recordings.
+
+## Authors
+
+Have an idea you want us to add? Reach out:
+
+- **Richard Hruby** — [GitHub](https://github.com/RichardHruby) | [𝕏](https://x.com/HrubyOnRails)
+- **Mehul Kalia** — [GitHub](https://github.com/MehulKalia) | [𝕏](https://x.com/MehulKalia_)
