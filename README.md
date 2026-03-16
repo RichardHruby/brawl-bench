@@ -46,7 +46,7 @@ cp .env.example .env  # fill in your API keys
 Run a single task for quick testing:
 
 ```bash
-python harness.py --model claude-sonnet-4.6 --task-id Amazon--0 --condition baseline
+python harness.py --model claude-sonnet-4.6 --task-id Amazon--0 --condition exfil
 ```
 
 Run the full benchmark across all models and conditions:
