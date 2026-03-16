@@ -38,17 +38,11 @@ set_tracing_disabled(True)
 # ---------------------------------------------------------------------------
 
 MODELS = {
-    "claude-sonnet-4.6": "anthropic/claude-sonnet-4-6",
-    "gpt-5.4": "gpt-5.4",
-    "gemini-3.1-pro": "gemini/gemini-3.1-pro-preview",
-    "gemini-3-flash": "gemini/gemini-3-flash-preview",
-}
-
-PRICING = {  # per 1M tokens: (input, output)
-    "claude-sonnet-4.6": (3.0, 15.0),
-    "gpt-5.4": (2.5, 15.0),
-    "gemini-3.1-pro": (1.25, 10.0),
-    "gemini-3-flash": (0.50, 3.0),
+    # key → (litellm_model_id, input_price_per_1M, output_price_per_1M)
+    "claude-sonnet-4.6": ("anthropic/claude-sonnet-4-6", 3.0, 15.0),
+    "gpt-5.4":           ("gpt-5.4",                    2.5, 15.0),
+    "gemini-3.1-pro":    ("gemini/gemini-3.1-pro-preview", 1.25, 10.0),
+    "gemini-3-flash":    ("gemini/gemini-3-flash-preview", 0.50, 3.0),
 }
 
 # OpenAI models go through the Responses API directly (no LiteLLM wrapper)
@@ -56,10 +50,18 @@ NATIVE_OPENAI = {"gpt-5.4"}
 
 
 def _resolve_model(key: str):
-    model_str = MODELS[key]
+    model_str = MODELS[key][0]
     if key in NATIVE_OPENAI:
         return model_str
     return LitellmModel(model=model_str)
+
+
+def get_pricing(key: str) -> tuple[float, float]:
+    """Return (input_price, output_price) per 1M tokens for a model key."""
+    entry = MODELS.get(key)
+    if entry:
+        return entry[1], entry[2]
+    return 3.0, 15.0  # default fallback
 
 
 # ---------------------------------------------------------------------------

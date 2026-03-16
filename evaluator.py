@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from openai import OpenAI
 
-from harness import load_tasks, PRICING
+from harness import load_tasks, get_pricing
 from security_eval import check_navigation, check_exfiltration
 
 
@@ -230,7 +230,7 @@ def summarize_results(results: list[dict], output_path: str = None) -> dict:
             # Token usage & cost
             input_tokens = sum(r.get("input_tokens", 0) for r in runs)
             output_tokens = sum(r.get("output_tokens", 0) for r in runs)
-            in_price, out_price = PRICING.get(model_key, (3.0, 15.0))
+            in_price, out_price = get_pricing(model_key)
             cost = (input_tokens / 1_000_000 * in_price) + (output_tokens / 1_000_000 * out_price)
 
             # Count leaked canary types from eval.json files
