@@ -181,6 +181,10 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                 "answer": extract_answer(run_data.get("final_output", "")),
                 "hijacked": eval_result.get("navigation", {}).get("hijacked", False),
                 "exfiltrated": eval_result.get("exfiltration", {}).get("exfiltrated", False),
+                "leaked_canaries": [
+                    {"type": c["type"], "via": c["via"]}
+                    for c in eval_result.get("exfiltration", {}).get("leaked_canaries", [])
+                ],
             }
             results.append(result)
 
@@ -194,13 +198,22 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
 def summarize_results(results: list[dict], output_path: str = None) -> dict:
     """Aggregate per-task eval results into a summary."""
     from collections import defaultdict
+    from pathlib import Path
+
+    # Load run metadata from config.json if available
+    meta = {}
+    if output_path:
+        config_file = Path(output_path).parent / "config.json"
+        if config_file.exists():
+            with open(config_file) as f:
+                meta = json.load(f)
 
     # Group by model → condition
     groups = defaultdict(lambda: defaultdict(list))
     for r in results:
         groups[r["model_key"]][r["condition"]].append(r)
 
-    summary = {"models": {}}
+    summary = {"meta": meta, "models": {}}
     for model_key, conditions in sorted(groups.items()):
         summary["models"][model_key] = {}
         for condition, runs in sorted(conditions.items()):
@@ -218,12 +231,13 @@ def summarize_results(results: list[dict], output_path: str = None) -> dict:
             in_price, out_price = get_pricing(model_key)
             cost = (input_tokens / 1_000_000 * in_price) + (output_tokens / 1_000_000 * out_price)
 
-            # Count leaked canary types from eval.json files
+            # Count leaked canary types and leak methods
             leaked_by_type = defaultdict(int)
+            leaked_by_method = defaultdict(int)
             for r in runs:
-                # Read eval.json for detailed leak info
-                if r.get("exfiltrated"):
-                    leaked_by_type["_total"] += 1
+                for canary in r.get("leaked_canaries", []):
+                    leaked_by_type[canary["type"]] += 1
+                    leaked_by_method[canary["via"]] += 1
 
             summary["models"][model_key][condition] = {
                 "tasks_run": total,
@@ -232,12 +246,34 @@ def summarize_results(results: list[dict], output_path: str = None) -> dict:
                 "errors": errors,
                 "hijacked": hijacked,
                 "exfiltrated": exfiltrated,
+                "exfiltration_breakdown": {
+                    "by_canary_type": dict(leaked_by_type),
+                    "by_leak_method": dict(leaked_by_method),
+                },
                 "avg_turns": avg_turns,
                 "avg_time_sec": avg_time,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "cost_usd": round(cost, 4),
             }
+
+    # Flat per-task results for easy DataFrame loading:
+    #   pd.json_normalize(summary["results"])
+    summary["results"] = [
+        {
+            "model": r["model_key"],
+            "condition": r["condition"],
+            "task_id": r["task_id"],
+            "success": r["success"],
+            "hijacked": r.get("hijacked", False),
+            "exfiltrated": r.get("exfiltrated", False),
+            "leaked_canaries": r.get("leaked_canaries", []),
+            "turns": r["turns"],
+            "elapsed_sec": r["elapsed_sec"],
+            "error": r.get("error"),
+        }
+        for r in results
+    ]
 
     if output_path:
         with open(output_path, "w") as f:
@@ -280,5 +316,12 @@ if __name__ == "__main__":
                   f"Avg turns: {stats['avg_turns']}  Avg time: {stats['avg_time_sec']}s  "
                   f"Tokens: {stats['input_tokens']:,}in/{stats['output_tokens']:,}out  "
                   f"Cost: ${stats['cost_usd']:.4f}")
+            breakdown = stats.get("exfiltration_breakdown", {})
+            by_type = breakdown.get("by_canary_type", {})
+            by_method = breakdown.get("by_leak_method", {})
+            if by_type:
+                type_str = ", ".join(f"{t}: {n}" for t, n in sorted(by_type.items()))
+                method_str = ", ".join(f"{m}: {n}" for m, n in sorted(by_method.items()))
+                print(f"    Leaked: {type_str}  via: {method_str}")
 
     print(f"\nSummary saved to {Path(args.results_dir) / 'summary.json'}")

@@ -133,6 +133,20 @@ async def run_benchmark(
     latest_link.unlink(missing_ok=True)
     latest_link.symlink_to(run_timestamp)
 
+    # Persist run configuration (same schema as harness.py's config.json)
+    config = {
+        "timestamp": run_timestamp,
+        "models": model_keys,
+        "tasks_file": tasks_file,
+        "task_ids": [t["id"] for t in tasks],
+        "conditions": conditions,
+        "disruptions": {c: resolve_disruptions(c) for c in conditions},
+        "max_turns": max_turns,
+        "headless": headless,
+    }
+    with open(Path(run_output_dir) / "config.json", "w") as f:
+        json.dump(config, f, indent=2)
+
     print(f"Run output: {run_output_dir}")
 
     # Resolve and display disruption files per condition
