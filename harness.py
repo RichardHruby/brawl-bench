@@ -216,7 +216,7 @@ async def run_task(
     condition: str = "baseline",
     max_turns: int = 25,
     screenshot_dir: str | None = None,
-    screenshot_to_llm: bool = False,
+    force_screenshot: bool = False,
 ) -> AgentRun:
     """
     Run a browser agent task with the specified model.
@@ -229,12 +229,12 @@ async def run_task(
         condition:    "baseline" or "disrupted"
         max_turns:    Max agent loop iterations
         screenshot_dir: If set, save a screenshot after the run completes
-        screenshot_to_llm: If True, inject each screenshot into the LLM context
+        force_screenshot: If True, inject each screenshot into the LLM context
     """
     # Set up per-turn screenshot hooks if screenshot_dir is provided
     hooks = None
     if screenshot_dir:
-        hooks = ScreenshotHooks(mcp_server, screenshot_dir, inject_to_llm=screenshot_to_llm)
+        hooks = ScreenshotHooks(mcp_server, screenshot_dir, inject_to_llm=force_screenshot)
 
     agent = Agent(
         name=f"browser-agent-{model_key}",
@@ -473,7 +473,7 @@ async def _main():
     valid_conditions = list(DISRUPTION_SETS.keys())
     parser.add_argument("--condition", default="baseline", choices=valid_conditions,
                         help=f"Condition: {', '.join(valid_conditions)} (default: baseline)")
-    parser.add_argument("--screenshot-to-llm", action="store_true",
+    parser.add_argument("--force-screenshot", action="store_true",
                         help="Inject browser screenshots into the LLM context each turn")
     args = parser.parse_args()
 
@@ -526,7 +526,7 @@ async def _main():
             condition=condition,
             max_turns=args.max_turns,
             screenshot_dir=str(run_dir),
-            screenshot_to_llm=args.screenshot_to_llm,
+            force_screenshot=args.force_screenshot,
         )
 
     print(f"\n{'='*60}")
