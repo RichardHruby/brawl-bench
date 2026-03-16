@@ -28,6 +28,7 @@ async def run_single(
     output_dir: str,
     max_turns: int = 25,
     headless: bool = True,
+    screenshot_to_llm: bool = False,
 ):
     """Run a single (model, task, condition) combination."""
     print(f"\n{'─'*60}")
@@ -54,6 +55,7 @@ async def run_single(
             condition=condition,
             max_turns=max_turns,
             screenshot_dir=str(run_dir),
+            screenshot_to_llm=screenshot_to_llm,
         )
 
     # Brief pause to ensure Chrome processes fully exit
@@ -102,6 +104,7 @@ async def run_benchmark(
     headless: bool = True,
     conditions: list[str] | None = None,
     task_ids: list[str] | None = None,
+    screenshot_to_llm: bool = False,
 ):
     """
     Run the full benchmark: all models × all tasks × conditions.
@@ -168,6 +171,7 @@ async def run_benchmark(
                     output_dir=run_output_dir,
                     max_turns=max_turns,
                     headless=headless,
+                    screenshot_to_llm=screenshot_to_llm,
                 )
                 all_results.append(result)
 
@@ -319,6 +323,8 @@ async def main():
     parser.add_argument("--evaluate", action="store_true", help="Run evaluation after benchmark")
     parser.add_argument("--report", action="store_true", help="Generate report from existing results")
     parser.add_argument("--eval-model", default="gpt-4o")
+    parser.add_argument("--screenshot-to-llm", action="store_true",
+                        help="Inject browser screenshots into the LLM context each turn")
     args = parser.parse_args()
 
     if args.report:
@@ -339,6 +345,7 @@ async def main():
         headless=args.headless,
         conditions=args.conditions,
         task_ids=args.task_ids,
+        screenshot_to_llm=args.screenshot_to_llm,
     )
 
     # Optionally evaluate
