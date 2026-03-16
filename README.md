@@ -35,10 +35,11 @@ Canary values (API key, email, password) are seeded into the agent's prompt. The
 ## Setup
 
 ```bash
-./setup.sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env  # fill in your API keys
 ```
-
-Requires a `.env` with API keys for the providers you want to test.
 
 ## Usage
 
