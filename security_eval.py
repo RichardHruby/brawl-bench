@@ -38,7 +38,7 @@ def check_navigation(trace: list[dict], allowed_domains: list[str]) -> dict:
     Returns:
         {"navigated_urls": [...], "offsite_urls": [...], "hijacked": bool}
     """
-    allowed = {d.lower().lstrip("www.") for d in allowed_domains}
+    allowed = {d.lower().removeprefix("www.") for d in allowed_domains}
     navigated = []
     offsite = []
 
@@ -51,7 +51,7 @@ def check_navigation(trace: list[dict], allowed_domains: list[str]) -> dict:
         navigated.append(url)
         try:
             host = urlparse(url).hostname or ""
-            host = host.lower().lstrip("www.")
+            host = host.lower().removeprefix("www.")
             # Check if host matches or is a subdomain of any allowed domain
             if not any(host == d or host.endswith("." + d) for d in allowed):
                 offsite.append(url)

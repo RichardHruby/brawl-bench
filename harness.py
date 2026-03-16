@@ -13,12 +13,14 @@ Usage:
 """
 
 import asyncio
+import base64
 import json
 import os
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
+from typing import NamedTuple
 
 from dotenv import load_dotenv
 
@@ -36,11 +38,16 @@ set_tracing_disabled(True)
 # Model Registry
 # ---------------------------------------------------------------------------
 
+class ModelConfig(NamedTuple):
+    litellm_id: str
+    input_price_per_1m: float
+    output_price_per_1m: float
+
 MODELS = {
-    "claude-sonnet-4.6": "anthropic/claude-sonnet-4-6",
-    "gpt-5.4": "gpt-5.4",
-    "gemini-3.1-pro": "gemini/gemini-3.1-pro-preview",
-    "gemini-3-flash": "gemini/gemini-3-flash-preview",
+    "claude-sonnet-4.6": ModelConfig("anthropic/claude-sonnet-4-6", 3.0, 15.0),
+    "gpt-5.4":           ModelConfig("gpt-5.4",                    2.5, 15.0),
+    "gemini-3.1-pro":    ModelConfig("gemini/gemini-3.1-pro-preview", 1.25, 10.0),
+    "gemini-3-flash":    ModelConfig("gemini/gemini-3-flash-preview", 0.50, 3.0),
 }
 
 # OpenAI models go through the Responses API directly (no LiteLLM wrapper)
@@ -48,10 +55,18 @@ NATIVE_OPENAI = {"gpt-5.4"}
 
 
 def _resolve_model(key: str):
-    model_str = MODELS[key]
+    cfg = MODELS[key]
     if key in NATIVE_OPENAI:
-        return model_str
-    return LitellmModel(model=model_str)
+        return cfg.litellm_id
+    return LitellmModel(model=cfg.litellm_id)
+
+
+def get_pricing(key: str) -> tuple[float, float]:
+    """Return (input_price, output_price) per 1M tokens for a model key."""
+    cfg = MODELS.get(key)
+    if cfg:
+        return cfg.input_price_per_1m, cfg.output_price_per_1m
+    return 3.0, 15.0  # default fallback
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +230,7 @@ async def run_task(
     condition: str = "baseline",
     max_turns: int = 25,
     screenshot_dir: str | None = None,
+    force_screenshot: bool = False,
 ) -> AgentRun:
     """
     Run a browser agent task with the specified model.
@@ -227,11 +243,12 @@ async def run_task(
         condition:    "baseline" or "disrupted"
         max_turns:    Max agent loop iterations
         screenshot_dir: If set, save a screenshot after the run completes
+        force_screenshot: If True, inject each screenshot into the LLM context
     """
     # Set up per-turn screenshot hooks if screenshot_dir is provided
     hooks = None
     if screenshot_dir:
-        hooks = ScreenshotHooks(mcp_server, screenshot_dir)
+        hooks = ScreenshotHooks(mcp_server, screenshot_dir, inject_to_llm=force_screenshot)
 
     agent = Agent(
         name=f"browser-agent-{model_key}",
@@ -239,6 +256,29 @@ async def run_task(
         model=_resolve_model(model_key),
         mcp_servers=[mcp_server],
     )
+
+    def _count_tokens(responses):
+        in_tok = sum(r.usage.input_tokens for r in responses if r.usage)
+        out_tok = sum(r.usage.output_tokens for r in responses if r.usage)
+        return in_tok, out_tok
+
+    def _build_run(*, final_output="", raw_responses=None, new_items=None, error=None):
+        responses = raw_responses or []
+        items = new_items or []
+        input_tok, output_tok = _count_tokens(responses)
+        return AgentRun(
+            model_key=model_key,
+            task_id=task_id,
+            condition=condition,
+            final_output=final_output,
+            turns=len(responses),
+            elapsed_sec=round(time.time() - t0, 2),
+            input_tokens=input_tok,
+            output_tokens=output_tok,
+            items=serialize_items(items) + (hooks.injections if hooks else []),
+            screenshots=hooks.screenshots if hooks else [],
+            error=error,
+        )
 
     t0 = time.time()
     try:
@@ -251,72 +291,37 @@ async def run_task(
             ),
             hooks=hooks,
         )
-
-        input_tok = sum(r.usage.input_tokens for r in result.raw_responses if r.usage)
-        output_tok = sum(r.usage.output_tokens for r in result.raw_responses if r.usage)
-
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
+        return _build_run(
             final_output=result.final_output or "",
-            turns=len(result.raw_responses),
-            elapsed_sec=round(time.time() - t0, 2),
-            input_tokens=input_tok,
-            output_tokens=output_tok,
-            items=serialize_items(result.new_items),
-            screenshots=hooks.screenshots if hooks else [],
+            raw_responses=result.raw_responses,
+            new_items=result.new_items,
         )
     except MaxTurnsExceeded as e:
-        # The agent ran but exceeded the turn limit.  The SDK attaches a
-        # RunErrorDetails to e.run_data with the partial results accumulated
-        # before the exception was raised.  Extract them so we don't lose
-        # the turns, token counts, and trace items.
-        rd = e.run_data  # RunErrorDetails | None
-        if rd is not None:
-            raw_responses = rd.raw_responses
-            new_items = rd.new_items
-        else:
-            raw_responses = []
-            new_items = []
-
-        input_tok = sum(r.usage.input_tokens for r in raw_responses if r.usage)
-        output_tok = sum(r.usage.output_tokens for r in raw_responses if r.usage)
-
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
-            final_output="",
-            turns=len(raw_responses),
-            elapsed_sec=round(time.time() - t0, 2),
-            input_tokens=input_tok,
-            output_tokens=output_tok,
-            items=serialize_items(new_items),
-            screenshots=hooks.screenshots if hooks else [],
+        rd = e.run_data
+        return _build_run(
+            raw_responses=rd.raw_responses if rd else [],
+            new_items=rd.new_items if rd else [],
             error=f"MaxTurnsExceeded: {str(e)[:500]}",
         )
     except Exception as e:
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
-            final_output="",
-            turns=0,
-            elapsed_sec=round(time.time() - t0, 2),
-            error=f"{type(e).__name__}: {str(e)[:500]}",
-            screenshots=hooks.screenshots if hooks else [],
-        )
+        return _build_run(error=f"{type(e).__name__}: {str(e)[:500]}")
 
 
 class ScreenshotHooks(RunHooksBase):
-    """Takes a browser screenshot between every agent turn for audit."""
+    """Takes a browser screenshot between every agent turn for audit.
 
-    def __init__(self, mcp_server, screenshot_dir: str):
+    When ``inject_to_llm=True``, each screenshot is also base64-encoded and
+    appended to ``input_items`` as an ``input_image`` user message so the LLM
+    can *see* the current page before its next response.
+    """
+
+    def __init__(self, mcp_server, screenshot_dir: str, inject_to_llm: bool = False):
         self._mcp = mcp_server
         self._dir = screenshot_dir
         self._turn = 0
+        self._inject = inject_to_llm
         self.screenshots: list[str] = []
+        self.injections: list[dict] = []  # track what was injected for the trace
         os.makedirs(screenshot_dir, exist_ok=True)
 
     async def on_llm_start(self, context, agent, system_prompt, input_items):
@@ -324,13 +329,15 @@ class ScreenshotHooks(RunHooksBase):
         # BEFORE this turn's LLM call. Skip turn 1 (nothing to capture yet).
         self._turn += 1
         if self._turn > 1:
-            await self._capture(f"turn_{self._turn - 1:02d}")
+            filepath = await self._capture(f"turn_{self._turn - 1:02d}")
+            if self._inject and filepath:
+                self._inject_screenshot(input_items, filepath)
 
     async def on_agent_end(self, context, agent, output):
         # Capture final state when agent produces its answer
         await self._capture("final")
 
-    async def _capture(self, name: str):
+    async def _capture(self, name: str) -> str | None:
         try:
             filepath = str(Path(self._dir).resolve() / f"{name}.png")
             await asyncio.wait_for(
@@ -341,10 +348,38 @@ class ScreenshotHooks(RunHooksBase):
                 timeout=10,
             )
             self.screenshots.append(filepath)
+            return filepath
         except asyncio.TimeoutError:
             print(f"  Warning: screenshot '{name}' timed out after 10s")
         except Exception as e:
             print(f"  Warning: screenshot '{name}' failed: {e}")
+        return None
+
+    def _inject_screenshot(self, input_items: list, filepath: str) -> None:
+        """Append a base64-encoded screenshot as a user message to *input_items*."""
+        with open(filepath, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        input_items.append({
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{b64}",
+                    "detail": "auto",
+                },
+                {
+                    "type": "input_text",
+                    "text": "Here is a screenshot of the current browser page.",
+                },
+            ],
+        })
+        self.injections.append({
+            "type": "screenshot_injection",
+            "turn": self._turn,
+            "file": Path(filepath).name,
+            "size_bytes": len(b64),
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +468,8 @@ async def _main():
     valid_conditions = list(DISRUPTION_SETS.keys())
     parser.add_argument("--condition", default="baseline", choices=valid_conditions,
                         help=f"Condition: {', '.join(valid_conditions)} (default: baseline)")
+    parser.add_argument("--force-screenshot", action="store_true",
+                        help="Inject browser screenshots into the LLM context each turn")
     args = parser.parse_args()
 
     tasks = load_tasks(args.task_file)
@@ -484,6 +521,7 @@ async def _main():
             condition=condition,
             max_turns=args.max_turns,
             screenshot_dir=str(run_dir),
+            force_screenshot=args.force_screenshot,
         )
 
     print(f"\n{'='*60}")
