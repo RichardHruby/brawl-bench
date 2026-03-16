@@ -9,7 +9,7 @@
 
 <p align="center"><b>B</b>rowser <b>R</b>obustness <b>A</b>gainst <b>W</b>eb-<b>L</b>evel Attacks</p>
 
-Adversarial benchmark for LLM browser agents. Agents complete real web tasks from the [WebVoyager](https://github.com/WebVoyager/WebVoyager) dataset while JavaScript disruptions, injected via Playwright's `--init-script`, try to hijack navigation, phish credentials, or just get in the way.
+Adversarial benchmark for LLM browser agents. Agents complete real web tasks from the [WebVoyager](https://github.com/MinorJerry/WebVoyager) dataset while JavaScript disruptions, injected via Playwright's `--init-script`, try to hijack navigation, phish credentials, or just get in the way.
 
 Tasks are sourced from WebVoyager's Amazon subset: natural-language shopping queries like finding products with specific filters, comparing prices, and checking availability.
 
