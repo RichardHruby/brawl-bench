@@ -35,7 +35,7 @@ async def run_single(
     print(f"  Task: {task['ques'][:80]}...")
     print(f"{'─'*60}")
 
-    init_scripts = disruption_files if condition == "disrupted" else None
+    init_scripts = disruption_files if condition != "baseline" else None
     run_dir = Path(output_dir) / model_key / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
@@ -101,6 +101,7 @@ async def run_benchmark(
     max_turns: int = 25,
     headless: bool = True,
     conditions: list[str] | None = None,
+    task_ids: list[str] | None = None,
 ):
     """
     Run the full benchmark: all models × all tasks × conditions.
@@ -116,6 +117,8 @@ async def run_benchmark(
     at the newest run.
     """
     tasks = load_tasks(tasks_file)
+    if task_ids:
+        tasks = [t for t in tasks if t["id"] in task_ids]
     model_keys = models or list(MODELS.keys())
     conditions = conditions or ["baseline"]
 
@@ -308,9 +311,11 @@ async def main():
     parser.add_argument("--tasks-file", default="tasks/amazon_selected.jsonl")
     parser.add_argument("--output-dir", default="results")
     parser.add_argument("--max-turns", type=int, default=25)
-    parser.add_argument("--headed", action="store_true")
-    parser.add_argument("--conditions", nargs="*", default=None,
-                        help="Conditions: baseline, annoyance, hijack, exfil (default: baseline)")
+    parser.add_argument("--headless", action="store_true", help="Run browser headless (default: headed)")
+    parser.add_argument("--task-ids", nargs="*", default=None, help="Task IDs to run (default: all)")
+    valid_conditions = list(DISRUPTION_SETS.keys())
+    parser.add_argument("--conditions", nargs="*", default=None, choices=valid_conditions,
+                        help=f"Conditions: {', '.join(valid_conditions)} (default: baseline)")
     parser.add_argument("--evaluate", action="store_true", help="Run evaluation after benchmark")
     parser.add_argument("--report", action="store_true", help="Generate report from existing results")
     parser.add_argument("--eval-model", default="gpt-4o")
@@ -331,8 +336,9 @@ async def main():
         tasks_file=args.tasks_file,
         output_dir=args.output_dir,
         max_turns=args.max_turns,
-        headless=not args.headed,
+        headless=args.headless,
         conditions=args.conditions,
+        task_ids=args.task_ids,
     )
 
     # Optionally evaluate

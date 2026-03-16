@@ -422,25 +422,32 @@ async def _main():
     """Quick test: run Amazon--0 with the specified model."""
     import argparse
 
+    from runner import DISRUPTION_SETS, resolve_disruptions
+
     parser = argparse.ArgumentParser(description="Browser Brawl Harness")
     parser.add_argument("--model", default="claude-sonnet-4.6", choices=list(MODELS.keys()))
     parser.add_argument("--task-file", default="tasks/amazon_selected.jsonl")
-    parser.add_argument("--task-index", type=int, default=0, help="Task index in JSONL (0-based)")
+    parser.add_argument("--task-id", default="Amazon--0", help="Task ID to run (default: Amazon--0)")
     parser.add_argument("--max-turns", type=int, default=25)
-    parser.add_argument("--headless", action="store_true", help="Run browser in headless mode (default: headed)")
-    parser.add_argument("--headed", action="store_true", help="(default) Run browser in headed mode")
-    parser.add_argument("--disruptions", nargs="*", default=[], help="JS disruption files to inject")
+    parser.add_argument("--headless", action="store_true", help="Run browser headless (default: headed)")
+    valid_conditions = list(DISRUPTION_SETS.keys())
+    parser.add_argument("--condition", default="baseline", choices=valid_conditions,
+                        help=f"Condition: {', '.join(valid_conditions)} (default: baseline)")
     args = parser.parse_args()
 
     tasks = load_tasks(args.task_file)
-    task = tasks[args.task_index]
-    condition = "disrupted" if args.disruptions else "baseline"
+    task = next((t for t in tasks if t["id"] == args.task_id), None)
+    if not task:
+        available = [t["id"] for t in tasks]
+        parser.error(f"Task '{args.task_id}' not found. Available: {available}")
+    condition = args.condition
 
     print(f"Running {task['id']} with {args.model} ({condition})")
     print(f"  Task: {task['ques']}")
 
     from datetime import datetime
-    init_scripts = args.disruptions if args.disruptions else None
+    disruption_files = resolve_disruptions(condition)
+    init_scripts = disruption_files if condition != "baseline" else None
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     run_base = Path("results") / run_timestamp
     run_dir = run_base / args.model / task["id"]
@@ -452,9 +459,9 @@ async def _main():
         "timestamp": run_timestamp,
         "models": [args.model],
         "tasks_file": args.task_file,
-        "task_index": args.task_index,
+        "task_id": args.task_id,
         "conditions": [condition],
-        "disruptions": args.disruptions or [],
+        "disruptions": disruption_files,
         "max_turns": args.max_turns,
         "headless": args.headless,
     }
