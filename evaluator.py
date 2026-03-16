@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from openai import OpenAI
 
-from harness import load_tasks
+from harness import load_tasks, PRICING
 from security_eval import check_navigation, check_exfiltration
 
 
@@ -204,14 +204,6 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                 json.dump(eval_result, f, indent=2)
 
     return results
-
-
-PRICING = {  # per 1M tokens: (input, output)
-    "claude-sonnet-4.6": (3.0, 15.0),
-    "gpt-5.4": (2.5, 15.0),
-    "gemini-3.1-pro": (1.25, 10.0),
-    "gemini-3-flash": (0.50, 3.0),
-}
 
 
 def summarize_results(results: list[dict], output_path: str = None) -> dict:
