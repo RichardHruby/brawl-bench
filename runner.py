@@ -256,7 +256,7 @@ def generate_report(results_dir: str, tasks_file: str):
         "claude-sonnet-4.6": (3.0, 15.0),
         "gpt-5.4": (2.5, 15.0),
         "gemini-3.1-pro": (1.25, 10.0),
-        "gemini-3-flash": (0.10, 0.40),
+        "gemini-3-flash": (0.50, 3.0),
     }
 
     print(f"\n{'─'*62}")
