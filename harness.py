@@ -503,6 +503,7 @@ async def _main():
         "disruptions": disruption_files,
         "max_turns": args.max_turns,
         "headless": args.headless,
+        "force_screenshot": args.force_screenshot,
     }
     config_path = run_base / "config.json"
     if not config_path.exists():

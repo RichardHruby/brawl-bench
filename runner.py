@@ -150,6 +150,8 @@ async def run_benchmark(
         "disruptions": {c: resolve_disruptions(c) for c in conditions},
         "max_turns": max_turns,
         "headless": headless,
+        "force_screenshot": force_screenshot,
+        "parallel": parallel,
     }
     with open(Path(run_output_dir) / "config.json", "w") as f:
         json.dump(config, f, indent=2)
