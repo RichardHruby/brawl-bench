@@ -1,8 +1,8 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
 # Conductor worktree setup script for brawl-bench
 # Creates a fresh venv and copies secrets into the worktree.
+
+#!/usr/bin/env bash
+set -euo pipefail
 
 python3 -m venv .venv
 .venv/bin/pip install -q -r requirements.txt
