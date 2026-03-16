@@ -432,9 +432,26 @@ async def _main():
     from datetime import datetime
     init_scripts = args.disruptions if args.disruptions else None
     run_timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    run_dir = Path("results") / run_timestamp / condition / args.model / task["id"]
+    run_base = Path("results") / run_timestamp
+    run_dir = run_base / condition / args.model / task["id"]
     run_dir.mkdir(parents=True, exist_ok=True)
     mcp_output_dir = str(run_dir / "mcp_output")
+
+    # Save run config
+    config = {
+        "timestamp": run_timestamp,
+        "models": [args.model],
+        "tasks_file": args.task_file,
+        "task_index": args.task_index,
+        "conditions": [condition],
+        "disruptions": args.disruptions or [],
+        "max_turns": args.max_turns,
+        "headless": args.headless,
+    }
+    config_path = run_base / "config.json"
+    if not config_path.exists():
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
 
     async with start_playwright(
         headless=args.headless,
