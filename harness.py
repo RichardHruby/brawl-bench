@@ -243,6 +243,29 @@ async def run_task(
         mcp_servers=[mcp_server],
     )
 
+    def _count_tokens(responses):
+        in_tok = sum(r.usage.input_tokens for r in responses if r.usage)
+        out_tok = sum(r.usage.output_tokens for r in responses if r.usage)
+        return in_tok, out_tok
+
+    def _build_run(*, final_output="", raw_responses=None, new_items=None, error=None):
+        responses = raw_responses or []
+        items = new_items or []
+        input_tok, output_tok = _count_tokens(responses)
+        return AgentRun(
+            model_key=model_key,
+            task_id=task_id,
+            condition=condition,
+            final_output=final_output,
+            turns=len(responses),
+            elapsed_sec=round(time.time() - t0, 2),
+            input_tokens=input_tok,
+            output_tokens=output_tok,
+            items=serialize_items(items) + (hooks.injections if hooks else []),
+            screenshots=hooks.screenshots if hooks else [],
+            error=error,
+        )
+
     t0 = time.time()
     try:
         result = await Runner.run(
@@ -254,62 +277,20 @@ async def run_task(
             ),
             hooks=hooks,
         )
-
-        input_tok = sum(r.usage.input_tokens for r in result.raw_responses if r.usage)
-        output_tok = sum(r.usage.output_tokens for r in result.raw_responses if r.usage)
-
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
+        return _build_run(
             final_output=result.final_output or "",
-            turns=len(result.raw_responses),
-            elapsed_sec=round(time.time() - t0, 2),
-            input_tokens=input_tok,
-            output_tokens=output_tok,
-            items=serialize_items(result.new_items) + (hooks.injections if hooks else []),
-            screenshots=hooks.screenshots if hooks else [],
+            raw_responses=result.raw_responses,
+            new_items=result.new_items,
         )
     except MaxTurnsExceeded as e:
-        # The agent ran but exceeded the turn limit.  The SDK attaches a
-        # RunErrorDetails to e.run_data with the partial results accumulated
-        # before the exception was raised.  Extract them so we don't lose
-        # the turns, token counts, and trace items.
-        rd = e.run_data  # RunErrorDetails | None
-        if rd is not None:
-            raw_responses = rd.raw_responses
-            new_items = rd.new_items
-        else:
-            raw_responses = []
-            new_items = []
-
-        input_tok = sum(r.usage.input_tokens for r in raw_responses if r.usage)
-        output_tok = sum(r.usage.output_tokens for r in raw_responses if r.usage)
-
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
-            final_output="",
-            turns=len(raw_responses),
-            elapsed_sec=round(time.time() - t0, 2),
-            input_tokens=input_tok,
-            output_tokens=output_tok,
-            items=serialize_items(new_items) + (hooks.injections if hooks else []),
-            screenshots=hooks.screenshots if hooks else [],
+        rd = e.run_data
+        return _build_run(
+            raw_responses=rd.raw_responses if rd else [],
+            new_items=rd.new_items if rd else [],
             error=f"MaxTurnsExceeded: {str(e)[:500]}",
         )
     except Exception as e:
-        return AgentRun(
-            model_key=model_key,
-            task_id=task_id,
-            condition=condition,
-            final_output="",
-            turns=0,
-            elapsed_sec=round(time.time() - t0, 2),
-            error=f"{type(e).__name__}: {str(e)[:500]}",
-            screenshots=hooks.screenshots if hooks else [],
-        )
+        return _build_run(error=f"{type(e).__name__}: {str(e)[:500]}")
 
 
 class ScreenshotHooks(RunHooksBase):

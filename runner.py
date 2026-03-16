@@ -178,135 +178,6 @@ async def run_benchmark(
     return all_results, run_output_dir
 
 
-def generate_report(results_dir: str, tasks_file: str):
-    """Generate a comparison report from evaluated results."""
-    eval_results = []
-    results_path = Path(results_dir)
-
-    for model_dir in sorted(results_path.iterdir()):
-        if not model_dir.is_dir() or model_dir.name.endswith(".json"):
-            continue
-        for task_dir in sorted(model_dir.iterdir()):
-            if not task_dir.is_dir():
-                continue
-            eval_file = task_dir / "eval.json"
-            run_file = task_dir / "run.json"
-            if eval_file.exists() and run_file.exists():
-                with open(eval_file) as f:
-                    eval_data = json.load(f)
-                with open(run_file) as f:
-                    run_data = json.load(f)
-                nav = eval_data.get("navigation", {})
-                exfil = eval_data.get("exfiltration", {})
-                eval_results.append({
-                    "condition": run_data.get("condition", "unknown"),
-                    "model": model_dir.name,
-                    "task": task_dir.name,
-                    "success": eval_data.get("success"),
-                    "turns": run_data.get("turns", 0),
-                    "elapsed": run_data.get("elapsed_sec", 0),
-                    "input_tokens": run_data.get("input_tokens", 0),
-                    "output_tokens": run_data.get("output_tokens", 0),
-                    "error": run_data.get("error"),
-                    "hijacked": nav.get("hijacked", False),
-                    "offsite_urls": nav.get("offsite_urls", []),
-                    "exfiltrated": exfil.get("exfiltrated", False),
-                    "leaked_canaries": exfil.get("leaked_canaries", []),
-                })
-
-    if not eval_results:
-        print("No evaluated results found.")
-        return
-
-    print(f"\n{'='*70}")
-    print("BROWSER BRAWL — BENCHMARK REPORT")
-    print(f"{'='*70}\n")
-
-    # Per-model summary
-    models_seen = sorted(set(r["model"] for r in eval_results))
-    conditions_seen = sorted(set(r["condition"] for r in eval_results))
-
-    print(f"{'Model':<22} {'Condition':<12} {'Success':<10} {'Rate':<8} {'Avg Turns':<10}")
-    print(f"{'─'*62}")
-
-    for model in models_seen:
-        for condition in conditions_seen:
-            runs = [r for r in eval_results if r["model"] == model and r["condition"] == condition]
-            successes = sum(1 for r in runs if r["success"] is True)
-            total = len(runs)
-            rate = f"{successes}/{total}" if total > 0 else "N/A"
-            pct = f"{100*successes/total:.0f}%" if total > 0 else "N/A"
-            avg_turns = f"{sum(r['turns'] for r in runs)/total:.1f}" if total > 0 else "N/A"
-            print(f"{model:<22} {condition:<12} {rate:<10} {pct:<8} {avg_turns:<10}")
-
-    # Delta analysis
-    print(f"\n{'─'*62}")
-    print("DISRUPTION IMPACT (baseline → disrupted)\n")
-
-    for model in models_seen:
-        baseline_runs = {r["task"]: r for r in eval_results if r["model"] == model and r["condition"] == "baseline"}
-        disrupted_runs = {r["task"]: r for r in eval_results if r["model"] == model and r["condition"] == "disrupted"}
-
-        regressions = 0
-        for task_id in baseline_runs:
-            b = baseline_runs[task_id]
-            d = disrupted_runs.get(task_id)
-            if d and b["success"] and not d["success"]:
-                regressions += 1
-                print(f"  REGRESSION: {model} / {task_id}: SUCCESS → FAIL")
-
-        if regressions == 0 and disrupted_runs:
-            print(f"  {model}: no regressions detected")
-
-    # Token usage & cost
-    PRICING = {  # per 1M tokens: (input, output)
-        "claude-sonnet-4.6": (3.0, 15.0),
-        "gpt-5.4": (2.5, 15.0),
-        "gemini-3.1-pro": (1.25, 10.0),
-        "gemini-3-flash": (0.50, 3.0),
-    }
-
-    print(f"\n{'─'*62}")
-    print("TOKEN USAGE & COST\n")
-    print(f"{'Model':<22} {'Condition':<12} {'Input Tok':<12} {'Output Tok':<12} {'Cost':<10}")
-    print(f"{'─'*68}")
-
-    total_cost = 0.0
-    for model in models_seen:
-        for condition in conditions_seen:
-            runs = [r for r in eval_results if r["model"] == model and r["condition"] == condition]
-            in_tok = sum(r["input_tokens"] for r in runs)
-            out_tok = sum(r["output_tokens"] for r in runs)
-            in_price, out_price = PRICING.get(model, (3.0, 15.0))
-            cost = (in_tok / 1_000_000 * in_price) + (out_tok / 1_000_000 * out_price)
-            total_cost += cost
-            print(f"{model:<22} {condition:<12} {in_tok:<12,} {out_tok:<12,} ${cost:.4f}")
-
-    print(f"{'─'*68}")
-    print(f"{'TOTAL':<46} ${total_cost:.4f}")
-
-    # Security events
-    security_events = [r for r in eval_results if r["hijacked"] or r["exfiltrated"]]
-    print(f"\n{'─'*62}")
-    print("SECURITY EVENTS\n")
-    if security_events:
-        print(f"{'Model':<22} {'Task':<14} {'Condition':<12} {'Hijack':<8} {'Exfil':<8} {'Details'}")
-        print(f"{'─'*80}")
-        for r in security_events:
-            details = ", ".join(r["offsite_urls"] + r["leaked_canaries"])
-            print(f"{r['model']:<22} {r['task']:<14} {r['condition']:<12} "
-                  f"{'YES' if r['hijacked'] else '-':<8} "
-                  f"{'YES' if r['exfiltrated'] else '-':<8} {details[:60]}")
-    else:
-        print("  No navigation hijacks or data exfiltration detected.")
-
-    # Save report
-    report_path = Path(results_dir) / "report.json"
-    with open(report_path, "w") as f:
-        json.dump(eval_results, f, indent=2)
-    print(f"\nFull report saved to: {report_path}")
-
-
 async def main():
     import argparse
 
@@ -321,20 +192,10 @@ async def main():
     parser.add_argument("--conditions", nargs="*", default=None, choices=valid_conditions,
                         help=f"Conditions: {', '.join(valid_conditions)} (default: baseline)")
     parser.add_argument("--evaluate", action="store_true", help="Run evaluation after benchmark")
-    parser.add_argument("--report", action="store_true", help="Generate report from existing results")
     parser.add_argument("--eval-model", default="gpt-4o")
     parser.add_argument("--force-screenshot", action="store_true",
                         help="Inject browser screenshots into the LLM context each turn")
     args = parser.parse_args()
-
-    if args.report:
-        # Use 'latest' symlink if the user just passes the base results dir
-        report_dir = args.output_dir
-        latest = Path(report_dir) / "latest"
-        if latest.is_symlink() or latest.is_dir():
-            report_dir = str(latest)
-        generate_report(report_dir, args.tasks_file)
-        return
 
     # Run benchmark
     _results, run_output_dir = await run_benchmark(
@@ -351,12 +212,13 @@ async def main():
     # Optionally evaluate
     if args.evaluate:
         from openai import OpenAI
+        from evaluator import summarize_results
         print(f"\n{'='*60}")
         print("RUNNING EVALUATION")
         print(f"{'='*60}")
         client = OpenAI()
-        evaluate_results_dir(run_output_dir, args.tasks_file, client, args.eval_model)
-        generate_report(run_output_dir, args.tasks_file)
+        results = evaluate_results_dir(run_output_dir, args.tasks_file, client, args.eval_model)
+        summarize_results(results, output_path=str(Path(run_output_dir) / "summary.json"))
 
 
 if __name__ == "__main__":
