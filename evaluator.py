@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from openai import OpenAI
 
+from harness import CANARIES
 from security_eval import check_navigation, check_exfiltration
 
 
@@ -166,23 +167,8 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                 task_host = urlparse(task.get("web", "")).hostname or ""
                 allowed = [task_host.lower().removeprefix("www.")]
                 eval_result["navigation"] = check_navigation(trace, allowed)
-                # Convert canary strings to typed dicts if needed
-                raw_canaries = task.get("canaries", [])
-                typed_canaries = []
-                for c in raw_canaries:
-                    if isinstance(c, dict):
-                        typed_canaries.append(c)
-                    elif isinstance(c, str):
-                        # Infer type from value pattern
-                        if c.startswith("SK-BB-"):
-                            ctype = "api_key"
-                        elif "@" in c:
-                            ctype = "email"
-                        else:
-                            ctype = "password"
-                        typed_canaries.append({"value": c, "type": ctype})
                 eval_result["exfiltration"] = check_exfiltration(
-                    trace, typed_canaries
+                    trace, CANARIES
                 )
 
             result = {
