@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from openai import OpenAI
 
+from harness import load_tasks
 from security_eval import check_navigation, check_exfiltration
 
 
@@ -108,11 +109,7 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
         client = OpenAI()
 
     # Load task descriptions
-    tasks_by_id = {}
-    with open(tasks_file) as f:
-        for line in f:
-            task = json.loads(line.strip())
-            tasks_by_id[task["id"]] = task
+    tasks_by_id = {t["id"]: t for t in load_tasks(tasks_file)}
 
     results = []
     results_path = Path(results_dir)
@@ -193,6 +190,8 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                 "reasoning": eval_result["reasoning"],
                 "turns": run_data.get("turns", 0),
                 "elapsed_sec": run_data.get("elapsed_sec", 0),
+                "input_tokens": run_data.get("input_tokens", 0),
+                "output_tokens": run_data.get("output_tokens", 0),
                 "error": run_data.get("error"),
                 "answer": extract_answer(run_data.get("final_output", "")),
                 "hijacked": eval_result.get("navigation", {}).get("hijacked", False),
@@ -205,6 +204,14 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
                 json.dump(eval_result, f, indent=2)
 
     return results
+
+
+PRICING = {  # per 1M tokens: (input, output)
+    "claude-sonnet-4.6": (3.0, 15.0),
+    "gpt-5.4": (2.5, 15.0),
+    "gemini-3.1-pro": (1.25, 10.0),
+    "gemini-3-flash": (0.50, 3.0),
+}
 
 
 def summarize_results(results: list[dict], output_path: str = None) -> dict:
@@ -228,6 +235,12 @@ def summarize_results(results: list[dict], output_path: str = None) -> dict:
             avg_turns = round(sum(r["turns"] for r in runs) / total, 1) if total else 0
             avg_time = round(sum(r["elapsed_sec"] for r in runs) / total, 1) if total else 0
 
+            # Token usage & cost
+            input_tokens = sum(r.get("input_tokens", 0) for r in runs)
+            output_tokens = sum(r.get("output_tokens", 0) for r in runs)
+            in_price, out_price = PRICING.get(model_key, (3.0, 15.0))
+            cost = (input_tokens / 1_000_000 * in_price) + (output_tokens / 1_000_000 * out_price)
+
             # Count leaked canary types from eval.json files
             leaked_by_type = defaultdict(int)
             for r in runs:
@@ -244,6 +257,9 @@ def summarize_results(results: list[dict], output_path: str = None) -> dict:
                 "exfiltrated": exfiltrated,
                 "avg_turns": avg_turns,
                 "avg_time_sec": avg_time,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "cost_usd": round(cost, 4),
             }
 
     if output_path:
@@ -284,6 +300,8 @@ if __name__ == "__main__":
             print(f"  {model} / {condition}:")
             print(f"    Tasks: {stats['tasks_run']}  Success: {stats['success_rate']:.0%}  "
                   f"Hijacked: {stats['hijacked']}  Exfiltrated: {stats['exfiltrated']}  "
-                  f"Avg turns: {stats['avg_turns']}  Avg time: {stats['avg_time_sec']}s")
+                  f"Avg turns: {stats['avg_turns']}  Avg time: {stats['avg_time_sec']}s  "
+                  f"Tokens: {stats['input_tokens']:,}in/{stats['output_tokens']:,}out  "
+                  f"Cost: ${stats['cost_usd']:.4f}")
 
     print(f"\nSummary saved to {Path(args.results_dir) / 'summary.json'}")
