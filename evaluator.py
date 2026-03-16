@@ -117,34 +117,39 @@ def evaluate_results_dir(results_dir: str, tasks_file: str, client: OpenAI = Non
     results = []
     results_path = Path(results_dir)
 
-    for condition_dir in sorted(results_path.iterdir()):
-        if not condition_dir.is_dir():
+    # Read condition from config.json if available
+    config_file = results_path / "config.json"
+    run_condition = "unknown"
+    if config_file.exists():
+        with open(config_file) as f:
+            config = json.load(f)
+        run_condition = config.get("conditions", ["unknown"])[0]
+
+    for model_dir in sorted(results_path.iterdir()):
+        if not model_dir.is_dir() or model_dir.name.endswith(".json"):
             continue
-        condition = condition_dir.name
+        model_key = model_dir.name
 
-        for model_dir in sorted(condition_dir.iterdir()):
-            if not model_dir.is_dir():
+        for task_dir in sorted(model_dir.iterdir()):
+            if not task_dir.is_dir():
                 continue
-            model_key = model_dir.name
+            task_id = task_dir.name
 
-            for task_dir in sorted(model_dir.iterdir()):
-                if not task_dir.is_dir():
-                    continue
-                task_id = task_dir.name
+            run_file = task_dir / "run.json"
+            if not run_file.exists():
+                continue
 
-                run_file = task_dir / "run.json"
-                if not run_file.exists():
-                    continue
+            with open(run_file) as f:
+                run_data = json.load(f)
 
-                with open(run_file) as f:
-                    run_data = json.load(f)
+            condition = run_data.get("condition", run_condition)
 
-                task = tasks_by_id.get(task_id)
-                if not task:
-                    print(f"  Warning: no task found for {task_id}")
-                    continue
+            task = tasks_by_id.get(task_id)
+            if not task:
+                print(f"  Warning: no task found for {task_id}")
+                continue
 
-                print(f"  Evaluating {condition}/{model_key}/{task_id}...")
+            print(f"  Evaluating {model_key}/{task_id}...")
                 eval_result = evaluate_run(
                     task_description=task["ques"],
                     agent_output=run_data.get("final_output", ""),
