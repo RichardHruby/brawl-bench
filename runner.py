@@ -7,6 +7,7 @@ then evaluates and generates a comparison report.
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 from glob import glob
@@ -18,6 +19,8 @@ load_dotenv()
 
 from harness import MODELS, start_playwright, run_task, load_tasks, format_prompt, save_result
 from evaluator import evaluate_results_dir, extract_answer
+
+logger = logging.getLogger(__name__)
 
 
 async def run_single(
@@ -104,6 +107,7 @@ async def run_benchmark(
     conditions: list[str] | None = None,
     task_ids: list[str] | None = None,
     force_screenshot: bool = False,
+    parallel: int = 1,
 ):
     """
     Run the full benchmark: all models × all tasks × conditions.
@@ -116,6 +120,9 @@ async def run_benchmark(
     Each run gets a timestamped subdirectory under output_dir to prevent
     overwriting previous results.  A 'latest' symlink is updated to point
     at the newest run.
+
+    When parallel > 1, up to that many browser tasks run concurrently.
+    Each task's failure is isolated — it never cancels sibling tasks.
     """
     tasks = load_tasks(tasks_file)
     if task_ids:
@@ -143,35 +150,82 @@ async def run_benchmark(
         elif condition != "baseline":
             print(f"WARNING: No disruption files for condition '{condition}'!")
 
+    # Build the full job list
+    jobs = [
+        (task, model_key, condition)
+        for task in tasks
+        for model_key in model_keys
+        for condition in conditions
+    ]
+
     print(f"Models: {model_keys}")
     print(f"Tasks: {[t['id'] for t in tasks]}")
     print(f"Conditions: {conditions}")
-    total = len(model_keys) * len(tasks) * len(conditions)
-    print(f"Total runs: {total}")
+    print(f"Total runs: {len(jobs)} (parallel={parallel})")
     print(f"{'='*60}")
 
-    all_results = []
-    run_count = 0
+    if parallel <= 1:
+        # Sequential mode — preserves original behavior exactly
+        all_results = []
+        for i, (task, model_key, condition) in enumerate(jobs, 1):
+            print(f"\n[{i}/{len(jobs)}]", end="")
+            disruption_files = resolve_disruptions(condition)
+            result = await run_single(
+                model_key=model_key,
+                task=task,
+                condition=condition,
+                disruption_files=disruption_files or None,
+                output_dir=run_output_dir,
+                max_turns=max_turns,
+                headless=headless,
+                force_screenshot=force_screenshot,
+            )
+            all_results.append(result)
+        return all_results, run_output_dir
 
-    for task in tasks:
-        for model_key in model_keys:
-            for condition in conditions:
-                run_count += 1
-                print(f"\n[{run_count}/{total}]", end="")
+    # Parallel mode — semaphore-gated, failure-isolated
+    semaphore = asyncio.Semaphore(parallel)
+    completed = 0
 
+    async def run_guarded(job_idx: int, task: dict, model_key: str, condition: str):
+        nonlocal completed
+        async with semaphore:
+            tag = f"{task['id']}/{model_key}/{condition}"
+            logger.info(f"[{job_idx}/{len(jobs)}] Starting {tag}")
+            try:
                 disruption_files = resolve_disruptions(condition)
-
                 result = await run_single(
                     model_key=model_key,
                     task=task,
                     condition=condition,
-                    disruption_files=disruption_files if disruption_files else None,
+                    disruption_files=disruption_files or None,
                     output_dir=run_output_dir,
                     max_turns=max_turns,
                     headless=headless,
                     force_screenshot=force_screenshot,
                 )
-                all_results.append(result)
+                completed += 1
+                logger.info(f"[{completed}/{len(jobs)}] Completed {tag}")
+                return result
+            except Exception:
+                completed += 1
+                logger.exception(f"[{completed}/{len(jobs)}] Failed {tag}")
+                return None
+
+    pending = [
+        asyncio.create_task(run_guarded(i, task, model_key, condition))
+        for i, (task, model_key, condition) in enumerate(jobs, 1)
+    ]
+
+    all_results = []
+    for coro in asyncio.as_completed(pending):
+        result = await coro
+        if result is not None:
+            all_results.append(result)
+
+    failed = len(jobs) - len(all_results)
+    if failed:
+        logger.warning(f"{failed}/{len(jobs)} tasks failed")
 
     return all_results, run_output_dir
 
@@ -193,7 +247,16 @@ async def main():
     parser.add_argument("--eval-model", default="gpt-4o")
     parser.add_argument("--force-screenshot", action="store_true",
                         help="Inject browser screenshots into the LLM context each turn")
+    parser.add_argument("--parallel", type=int, default=1,
+                        help="Max concurrent browser tasks (default: 1, sequential)")
     args = parser.parse_args()
+
+    if args.parallel > 1:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%H:%M:%S",
+        )
 
     # Run benchmark
     _results, run_output_dir = await run_benchmark(
@@ -205,6 +268,7 @@ async def main():
         conditions=args.conditions,
         task_ids=args.task_ids,
         force_screenshot=args.force_screenshot,
+        parallel=args.parallel,
     )
 
     # Optionally evaluate
