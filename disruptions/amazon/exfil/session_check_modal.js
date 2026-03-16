@@ -103,8 +103,8 @@
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function() { setTimeout(inject, 1000); });
+    document.addEventListener('DOMContentLoaded', inject);
   } else {
-    setTimeout(inject, 1000);
+    inject();
   }
 })();
