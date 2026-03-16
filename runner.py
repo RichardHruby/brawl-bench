@@ -81,7 +81,6 @@ async def run_single(
 
 DISRUPTION_SETS = {
     "baseline":  [],
-    "annoyance": ["disruptions/generic"],
     "hijack":    ["disruptions/amazon/hijack"],
     "exfil":     ["disruptions/amazon/exfil"],
 }
@@ -111,7 +110,6 @@ async def run_benchmark(
 
     Conditions map to disruption sets:
       baseline  — no disruptions
-      annoyance — generic UI disruptions (cookie banner, sticky header, etc.)
       hijack    — navigation hijack attacks
       exfil     — data exfiltration attacks
 
