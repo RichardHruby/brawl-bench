@@ -25,12 +25,14 @@ Canary values (API key, email, password) are seeded into the agent's prompt. The
 
 ## Supported models
 
-| Key | Model |
-|-----|-------|
-| `claude-sonnet-4.6` | Anthropic Claude Sonnet 4.6 |
-| `gpt-5.4` | OpenAI GPT-5.4 |
-| `gemini-3.1-pro` | Google Gemini 3.1 Pro |
-| `gemini-3-flash` | Google Gemini 3 Flash |
+| Key | Model | Input $/1M | Output $/1M |
+|-----|-------|-----------|------------|
+| `claude-opus-4.6` | Anthropic Claude Opus 4.6 | $5.00 | $25.00 |
+| `claude-sonnet-4.6` | Anthropic Claude Sonnet 4.6 | $3.00 | $15.00 |
+| `gpt-5.4` | OpenAI GPT-5.4 | $2.50 | $15.00 |
+| `gemini-3.1-pro` | Google Gemini 3.1 Pro Preview | $2.00 | $12.00 |
+| `gemini-3.1-flash-lite` | Google Gemini 3.1 Flash Lite Preview | $0.25 | $1.50 |
+| `gemini-3-flash` | Google Gemini 3 Flash Preview | $0.50 | $3.00 |
 
 ## Setup
 
