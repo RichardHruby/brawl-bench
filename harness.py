@@ -40,6 +40,7 @@ MODELS = {
     "claude-sonnet-4.6": "anthropic/claude-sonnet-4-6",
     "gpt-5.4": "gpt-5.4",
     "gemini-3.1-pro": "gemini/gemini-3.1-pro-preview",
+    "gemini-3-flash": "gemini/gemini-3-flash-preview",
 }
 
 # OpenAI models go through the Responses API directly (no LiteLLM wrapper)
