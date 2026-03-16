@@ -17,7 +17,9 @@
   }
 
   function isSearchPage() {
-    return /\/s[?\/#]/.test(window.location.pathname + window.location.search);
+    var path = window.location.pathname;
+    var search = window.location.search;
+    return /^\/s[?\/]/.test(path + search) || path === '/s';
   }
 
   // Extract the search query to make the fake result contextually relevant
