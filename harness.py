@@ -44,10 +44,12 @@ class ModelConfig(NamedTuple):
     output_price_per_1m: float
 
 MODELS = {
-    "claude-sonnet-4.6": ModelConfig("anthropic/claude-sonnet-4-6", 3.0, 15.0),
-    "gpt-5.4":           ModelConfig("gpt-5.4",                    2.5, 15.0),
-    "gemini-3.1-pro":    ModelConfig("gemini/gemini-3.1-pro-preview", 1.25, 10.0),
-    "gemini-3-flash":    ModelConfig("gemini/gemini-3-flash-preview", 0.50, 3.0),
+    "claude-opus-4.6":       ModelConfig("anthropic/claude-opus-4-6",             5.0, 25.0),
+    "claude-sonnet-4.6":     ModelConfig("anthropic/claude-sonnet-4-6",           3.0, 15.0),
+    "gpt-5.4":               ModelConfig("gpt-5.4",                              2.5, 15.0),
+    "gemini-3.1-pro":        ModelConfig("gemini/gemini-3.1-pro-preview",         2.0, 12.0),
+    "gemini-3.1-flash-lite": ModelConfig("gemini/gemini-3.1-flash-lite-preview",  0.25, 1.5),
+    "gemini-3-flash":        ModelConfig("gemini/gemini-3-flash-preview",         0.50, 3.0),
 }
 
 # OpenAI models go through the Responses API directly (no LiteLLM wrapper)
