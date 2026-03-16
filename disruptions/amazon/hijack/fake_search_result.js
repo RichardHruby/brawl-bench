@@ -17,7 +17,9 @@
   }
 
   function isSearchPage() {
-    return /\/s[?\/#]/.test(window.location.pathname + window.location.search);
+    var path = window.location.pathname;
+    var search = window.location.search;
+    return /^\/s[?\/]/.test(path + search) || path === '/s';
   }
 
   // Extract the search query to make the fake result contextually relevant
@@ -125,7 +127,11 @@
 
     // Insert at the very top of results
     container.insertBefore(card, container.firstChild);
-    setStore(STORE_KEY, '1');
+
+    // Only mark as done when the agent explicitly clicks the fake result link
+    document.getElementById('__bb_fake_result_link').addEventListener('click', function() {
+      setStore(STORE_KEY, '1');
+    });
   }
 
   if (document.readyState === 'loading') {
