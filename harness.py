@@ -13,6 +13,7 @@ Usage:
 """
 
 import asyncio
+import base64
 import json
 import os
 import time
@@ -206,6 +207,7 @@ async def run_task(
     condition: str = "baseline",
     max_turns: int = 25,
     screenshot_dir: str | None = None,
+    screenshot_to_llm: bool = False,
 ) -> AgentRun:
     """
     Run a browser agent task with the specified model.
@@ -218,11 +220,12 @@ async def run_task(
         condition:    "baseline" or "disrupted"
         max_turns:    Max agent loop iterations
         screenshot_dir: If set, save a screenshot after the run completes
+        screenshot_to_llm: If True, inject each screenshot into the LLM context
     """
     # Set up per-turn screenshot hooks if screenshot_dir is provided
     hooks = None
     if screenshot_dir:
-        hooks = ScreenshotHooks(mcp_server, screenshot_dir)
+        hooks = ScreenshotHooks(mcp_server, screenshot_dir, inject_to_llm=screenshot_to_llm)
 
     agent = Agent(
         name=f"browser-agent-{model_key}",
@@ -255,7 +258,7 @@ async def run_task(
             elapsed_sec=round(time.time() - t0, 2),
             input_tokens=input_tok,
             output_tokens=output_tok,
-            items=serialize_items(result.new_items),
+            items=serialize_items(result.new_items) + (hooks.injections if hooks else []),
             screenshots=hooks.screenshots if hooks else [],
         )
     except MaxTurnsExceeded as e:
@@ -283,7 +286,7 @@ async def run_task(
             elapsed_sec=round(time.time() - t0, 2),
             input_tokens=input_tok,
             output_tokens=output_tok,
-            items=serialize_items(new_items),
+            items=serialize_items(new_items) + (hooks.injections if hooks else []),
             screenshots=hooks.screenshots if hooks else [],
             error=f"MaxTurnsExceeded: {str(e)[:500]}",
         )
@@ -301,13 +304,20 @@ async def run_task(
 
 
 class ScreenshotHooks(RunHooksBase):
-    """Takes a browser screenshot between every agent turn for audit."""
+    """Takes a browser screenshot between every agent turn for audit.
 
-    def __init__(self, mcp_server, screenshot_dir: str):
+    When ``inject_to_llm=True``, each screenshot is also base64-encoded and
+    appended to ``input_items`` as an ``input_image`` user message so the LLM
+    can *see* the current page before its next response.
+    """
+
+    def __init__(self, mcp_server, screenshot_dir: str, inject_to_llm: bool = False):
         self._mcp = mcp_server
         self._dir = screenshot_dir
         self._turn = 0
+        self._inject = inject_to_llm
         self.screenshots: list[str] = []
+        self.injections: list[dict] = []  # track what was injected for the trace
         os.makedirs(screenshot_dir, exist_ok=True)
 
     async def on_llm_start(self, context, agent, system_prompt, input_items):
@@ -315,13 +325,15 @@ class ScreenshotHooks(RunHooksBase):
         # BEFORE this turn's LLM call. Skip turn 1 (nothing to capture yet).
         self._turn += 1
         if self._turn > 1:
-            await self._capture(f"turn_{self._turn - 1:02d}")
+            filepath = await self._capture(f"turn_{self._turn - 1:02d}")
+            if self._inject and filepath:
+                self._inject_screenshot(input_items, filepath)
 
     async def on_agent_end(self, context, agent, output):
         # Capture final state when agent produces its answer
         await self._capture("final")
 
-    async def _capture(self, name: str):
+    async def _capture(self, name: str) -> str | None:
         try:
             filepath = str(Path(self._dir).resolve() / f"{name}.png")
             await asyncio.wait_for(
@@ -332,10 +344,38 @@ class ScreenshotHooks(RunHooksBase):
                 timeout=10,
             )
             self.screenshots.append(filepath)
+            return filepath
         except asyncio.TimeoutError:
             print(f"  Warning: screenshot '{name}' timed out after 10s")
         except Exception as e:
             print(f"  Warning: screenshot '{name}' failed: {e}")
+        return None
+
+    def _inject_screenshot(self, input_items: list, filepath: str) -> None:
+        """Append a base64-encoded screenshot as a user message to *input_items*."""
+        with open(filepath, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        input_items.append({
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{b64}",
+                    "detail": "auto",
+                },
+                {
+                    "type": "input_text",
+                    "text": "Here is a screenshot of the current browser page.",
+                },
+            ],
+        })
+        self.injections.append({
+            "type": "screenshot_injection",
+            "turn": self._turn,
+            "file": Path(filepath).name,
+            "size_bytes": len(b64),
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +461,8 @@ async def _main():
     parser.add_argument("--headless", action="store_true", help="Run browser in headless mode (default: headed)")
     parser.add_argument("--headed", action="store_true", help="(default) Run browser in headed mode")
     parser.add_argument("--disruptions", nargs="*", default=[], help="JS disruption files to inject")
+    parser.add_argument("--screenshot-to-llm", action="store_true",
+                        help="Inject browser screenshots into the LLM context each turn")
     args = parser.parse_args()
 
     tasks = load_tasks(args.task_file)
@@ -468,6 +510,7 @@ async def _main():
             condition=condition,
             max_turns=args.max_turns,
             screenshot_dir=str(run_dir),
+            screenshot_to_llm=args.screenshot_to_llm,
         )
 
     print(f"\n{'='*60}")
