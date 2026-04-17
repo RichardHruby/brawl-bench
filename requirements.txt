@@ -1,3 +1,4 @@
 python-dotenv>=1.0
 openai>=2.0
 openai-agents[litellm]>=0.12
+litellm>=1.83.0
