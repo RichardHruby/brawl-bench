@@ -84,6 +84,12 @@ The evaluator scores each run on two axes:
 
 Results are saved per-run as `run.json`, `trace.json`, `eval.json`, plus screenshots and video recordings.
 
+## Example Data Exfils
+<img width="1562" height="928" alt="image" src="https://github.com/user-attachments/assets/c8e7fabf-d853-4a7a-9b41-d0d562d7aaa0" />
+
+<img width="1543" height="932" alt="data_exfil1" src="https://github.com/user-attachments/assets/a2574b5e-d7e7-4af0-9882-ff74bec93893" />
+
+
 ## Authors
 
 Have an idea you want us to add? Reach out:
